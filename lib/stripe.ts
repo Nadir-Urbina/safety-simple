@@ -1,0 +1,1 @@
+import { loadStripe } from '@stripe/stripe-js'; const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY as string); export default stripePromise; export const LICENSE_PRICES = { admin: 29.99, analyst: 14.99, user: 2.99, };
