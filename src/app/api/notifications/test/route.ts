@@ -5,9 +5,9 @@ import {
   testCriticalIncidentNotification,
   testFormSubmissionNotification
 } from '../../../../services/email/test-email';
-import { db } from '@/lib/firebase';
+import { db } from '../../../../../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { Organization } from '@/types';
+import type { Organization } from '../../../../../types';
 
 // Helper function to get organization
 async function getOrganization(organizationId: string): Promise<Organization | null> {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getFirestore } from 'firebase-admin/firestore';
-import { auth } from '@/lib/firebase';
+import { auth } from '../../../lib/firebase';
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
