@@ -245,191 +245,207 @@ export default function FormsManagementPage() {
     <div className="container py-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Form Management</h1>
-        <Button onClick={createNewForm}>
-          <FilePlus className="mr-2 h-4 w-4" />
+        <Button onClick={createNewForm} size="lg" className="gap-2">
+          <FilePlus className="h-5 w-5" />
           Create New Form
         </Button>
       </div>
       
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Manage Forms</CardTitle>
-          <CardDescription>
-            Create and manage custom forms for your organization. Forms can be used to collect
-            data for incident reports, employee recognition, and more.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col md:flex-row md:items-center gap-4 mb-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+      {forms.length === 0 ? (
+        <Card className="mb-6">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+            <h2 className="text-xl font-medium mb-2">No Forms Created Yet</h2>
+            <p className="text-muted-foreground mb-6 text-center max-w-md">
+              Create your first form to start collecting safety data from your team.
+              Forms can be used for incident reports, safety observations, and more.
+            </p>
+            <Button onClick={createNewForm} size="lg" className="gap-2">
+              <FilePlus className="h-5 w-5" />
+              Create Your First Form
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+            <div className="relative w-full md:w-96">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                type="search"
+                className="pl-10"
                 placeholder="Search forms..."
-                className="pl-8"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+            
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-auto">
+              <TabsList>
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="active">Active</TabsTrigger>
+                <TabsTrigger value="inactive">Inactive</TabsTrigger>
+                <TabsTrigger value="incident">Incidents</TabsTrigger>
+                <TabsTrigger value="other">Other</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
           
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-            <TabsList className="grid grid-cols-2 md:grid-cols-7">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="active">Active</TabsTrigger>
-              <TabsTrigger value="inactive">Inactive</TabsTrigger>
-              <TabsTrigger value="incident">Incident</TabsTrigger>
-              <TabsTrigger value="recognition">Recognition</TabsTrigger>
-              <TabsTrigger value="heatPrevention">Heat Prevention</TabsTrigger>
-              <TabsTrigger value="other">Other</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          
-          {filteredForms.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed rounded-md">
-              <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-semibold">No forms found</h3>
-              <p className="text-muted-foreground mt-2 mb-4">
-                {searchQuery
-                  ? "No forms match your search criteria."
-                  : "You haven't created any forms yet."}
-              </p>
-              <Button onClick={createNewForm}>
-                <FilePlus className="mr-2 h-4 w-4" />
-                Create Your First Form
-              </Button>
-            </div>
-          ) : (
-            <div className="overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Form Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last Updated</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredForms.map((form) => (
-                    <TableRow key={form.id}>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center">
-                          <File className="mr-2 h-4 w-4 text-muted-foreground" />
-                          <div>
-                            <div>{form.name}</div>
-                            {form.description && (
-                              <div className="text-xs text-muted-foreground">
-                                {form.description.length > 50
-                                  ? `${form.description.substring(0, 50)}...`
-                                  : form.description}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Manage Forms</CardTitle>
+              <CardDescription>
+                Create and manage custom forms for your organization. Forms can be used to collect
+                data for incident reports, employee recognition, and more.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {filteredForms.length === 0 ? (
+                <div className="text-center py-12 border-2 border-dashed rounded-md">
+                  <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No forms found</h3>
+                  <p className="text-muted-foreground mt-2 mb-4">
+                    {searchQuery
+                      ? "No forms match your search criteria."
+                      : "You haven't created any forms yet."}
+                  </p>
+                  <Button onClick={createNewForm}>
+                    <FilePlus className="mr-2 h-4 w-4" />
+                    Create Your First Form
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Form Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Last Updated</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredForms.map((form) => (
+                        <TableRow key={form.id}>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center">
+                              <File className="mr-2 h-4 w-4 text-muted-foreground" />
+                              <div>
+                                <div>{form.name}</div>
+                                {form.description && (
+                                  <div className="text-xs text-muted-foreground">
+                                    {form.description.length > 50
+                                      ? `${form.description.substring(0, 50)}...`
+                                      : form.description}
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>{getCategoryBadge(form.category)}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center">
-                          {form.isActive ? (
-                            <div className="flex items-center">
-                              <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
-                              <span>Active</span>
                             </div>
-                          ) : (
+                          </TableCell>
+                          <TableCell>{getCategoryBadge(form.category)}</TableCell>
+                          <TableCell>
                             <div className="flex items-center">
-                              <span className="h-2 w-2 rounded-full bg-gray-300 mr-2" />
-                              <span>Inactive</span>
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {format(form.updatedAt, "MMM d, yyyy")}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={() => router.push(`/dashboard/forms/builder?id=${form.id}`)}>
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Edit Form
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => router.push(`/dashboard/forms/view?id=${form.id}`)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View Form
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => toggleFormStatus(form.id, form.isActive)}>
                               {form.isActive ? (
-                                <>
-                                  <ToggleLeft className="mr-2 h-4 w-4" />
-                                  Deactivate
-                                </>
+                                <div className="flex items-center">
+                                  <span className="h-2 w-2 rounded-full bg-green-500 mr-2" />
+                                  <span>Active</span>
+                                </div>
                               ) : (
-                                <>
-                                  <ToggleRight className="mr-2 h-4 w-4" />
-                                  Activate
-                                </>
+                                <div className="flex items-center">
+                                  <span className="h-2 w-2 rounded-full bg-gray-300 mr-2" />
+                                  <span>Inactive</span>
+                                </div>
                               )}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem 
-                              className="text-red-600" 
-                              onClick={() => {
-                                setSelectedFormId(form.id)
-                                setShowDeleteDialog(true)
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-        <CardFooter className="text-sm text-muted-foreground">
-          {filteredForms.length > 0 ? (
-            <div className="flex items-center">
-              <AlertCircle className="mr-2 h-4 w-4" />
-              {filteredForms.length} {filteredForms.length === 1 ? "form" : "forms"} found
-            </div>
-          ) : null}
-        </CardFooter>
-      </Card>
-      
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the form and all associated data.
-              This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              className="bg-red-600 hover:bg-red-700" 
-              onClick={deleteForm}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {format(form.updatedAt, "MMM d, yyyy")}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => router.push(`/dashboard/forms/builder?id=${form.id}`)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  Edit Form
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => router.push(`/dashboard/forms/view?id=${form.id}`)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Form
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => toggleFormStatus(form.id, form.isActive)}>
+                                  {form.isActive ? (
+                                    <>
+                                      <ToggleLeft className="mr-2 h-4 w-4" />
+                                      Deactivate
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ToggleRight className="mr-2 h-4 w-4" />
+                                      Activate
+                                    </>
+                                  )}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  className="text-red-600" 
+                                  onClick={() => {
+                                    setSelectedFormId(form.id)
+                                    setShowDeleteDialog(true)
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+            <CardFooter className="text-sm text-muted-foreground">
+              {filteredForms.length > 0 ? (
+                <div className="flex items-center">
+                  <AlertCircle className="mr-2 h-4 w-4" />
+                  {filteredForms.length} {filteredForms.length === 1 ? "form" : "forms"} found
+                </div>
+              ) : null}
+            </CardFooter>
+          </Card>
+          
+          {/* Delete Confirmation Dialog */}
+          <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete the form and all associated data.
+                  This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction 
+                  className="bg-red-600 hover:bg-red-700" 
+                  onClick={deleteForm}>
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      )}
     </div>
   )
 } 

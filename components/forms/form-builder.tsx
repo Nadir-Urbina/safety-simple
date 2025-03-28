@@ -306,9 +306,12 @@ export function FormBuilder({
         </CardContent>
         {onSave && (
           <CardFooter className="flex justify-end">
-            <Button onClick={onSave} disabled={isSaving}>
+            <Button onClick={onSave} disabled={isSaving} className="relative overflow-hidden">
               <Save className="mr-2 h-4 w-4" />
               {isSaving ? "Saving..." : "Save Form"}
+              {isSaving && (
+                <span className="absolute bottom-0 left-0 h-1 bg-primary-foreground animate-progress"></span>
+              )}
             </Button>
           </CardFooter>
         )}

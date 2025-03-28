@@ -106,19 +106,36 @@ export default function FormBuilderPage() {
   // Save form to Firestore
   const saveForm = async () => {
     if (!organization?.id || !user?.uid) {
+      console.error("Missing data:", { organizationId: organization?.id, userId: user?.uid });
       toast.error("Organization or user information missing")
       return
     }
     
     try {
       setIsSaving(true)
+      console.log("Starting form save process...");
       
       // Make sure createdBy is set
-      const updatedTemplate: FormTemplate = {
+      const updatedTemplate = {
         ...formTemplate,
         createdBy: formTemplate.createdBy || user.uid,
         organizationId: organization.id,
+        // Convert Date objects to Firestore compatible timestamps
+        createdAt: formTemplate.createdAt,
         updatedAt: new Date()
+      }
+      
+      console.log("Form to save:", updatedTemplate);
+      
+      // Prepare form data for Firestore by ensuring it's properly serializable
+      const firestoreData = {
+        ...updatedTemplate,
+        // Convert fields to ensure serializable
+        fields: updatedTemplate.fields.map(field => ({
+          ...field,
+          // Remove any functions or non-serializable data
+          options: field.options ? [...field.options] : undefined
+        }))
       }
       
       // Set the form in Firestore
@@ -130,19 +147,28 @@ export default function FormBuilderPage() {
         updatedTemplate.id
       )
       
-      await setDoc(formRef, updatedTemplate)
+      console.log(`Saving to path: organizations/${organization.id}/formTemplates/${updatedTemplate.id}`);
       
-      toast.success(formId ? "Form updated successfully" : "Form created successfully")
+      // Save to Firestore
+      await setDoc(formRef, firestoreData);
+      
+      console.log("Form saved successfully to Firestore!");
+      
+      // Show a more visible toast notification
+      toast.success(formId ? "Form updated successfully" : "Form created successfully", {
+        duration: 4000,
+        position: "top-center"
+      })
       
       // If it's a new form, update the URL to include the form ID
       if (!formId) {
-        router.push(`/dashboard/forms/builder?id=${updatedTemplate.id}`)
+        router.push(`/dashboard/forms/builder?id=${updatedTemplate.id}`);
       }
     } catch (error) {
-      console.error("Error saving form:", error)
-      toast.error("Failed to save form")
+      console.error("Error saving form:", error);
+      toast.error("Failed to save form. See console for details.");
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
   }
   
@@ -196,10 +222,20 @@ export default function FormBuilderPage() {
             {formId ? "Edit Form" : "Create New Form"}
           </h1>
         </div>
-        <Button onClick={saveForm} disabled={isSaving}>
-          <Save className="mr-2 h-4 w-4" />
-          {isSaving ? "Saving..." : "Save Form"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {formTemplate.updatedAt && formId && (
+            <p className="text-sm text-muted-foreground mr-2">
+              Last saved: {new Date(formTemplate.updatedAt).toLocaleTimeString()}
+            </p>
+          )}
+          <Button onClick={saveForm} disabled={isSaving} className="relative overflow-hidden">
+            <Save className="mr-2 h-4 w-4" />
+            {isSaving ? "Saving..." : "Save Form"}
+            {isSaving && (
+              <span className="absolute bottom-0 left-0 h-1 bg-primary-foreground animate-progress"></span>
+            )}
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>

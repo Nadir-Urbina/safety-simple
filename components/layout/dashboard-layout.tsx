@@ -66,7 +66,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       icon: <Home className="h-5 w-5" />,
     },
     {
-      title: "Analytics",
+      title: "Analytics & Reports",
       href: "/dashboard/analytics",
       icon: <BarChart className="h-5 w-5" />,
       roles: ["admin", "analyst"],
@@ -77,21 +77,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       icon: <FileText className="h-5 w-5" />,
     },
     {
-      title: "Create Form",
-      href: "/dashboard/forms/builder",
-      icon: <FilePlus className="h-5 w-5" />,
-      roles: ["admin"],
-    },
-    {
       title: "Submissions",
       href: "/dashboard/forms/submissions",
       icon: <Inbox className="h-5 w-5" />,
       roles: ["admin", "analyst"],
-    },
-    {
-      title: "Reports",
-      href: "/dashboard/reports",
-      icon: <ClipboardList className="h-5 w-5" />,
     },
     {
       title: "Team",
