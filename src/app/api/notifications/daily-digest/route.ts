@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { sendDailyDigest } from '../../../../services/email/notification-service';
+
+// Initialize Firebase Admin if not already initialized
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '',
+      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY 
+        ? process.env.FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, '\n')
+        : '',
+    }),
+  });
+}
+
+// Get Firestore from Firebase Admin
+const db = getFirestore();
 
 // Vercel cron job will call this endpoint daily
 export async function GET(req: NextRequest) {
@@ -18,8 +34,8 @@ export async function GET(req: NextRequest) {
     }
     
     // Get all organizations
-    const organizationsRef = collection(db, 'organizations');
-    const organizationsSnapshot = await getDocs(organizationsRef);
+    const organizationsRef = db.collection('organizations');
+    const organizationsSnapshot = await organizationsRef.get();
     
     if (organizationsSnapshot.empty) {
       return NextResponse.json({ success: false, message: 'No organizations found' });
@@ -33,15 +49,15 @@ export async function GET(req: NextRequest) {
       
       try {
         // Check if this organization has daily digest enabled
-        const settingsDoc = await getDocs(
-          query(
-            collection(db, 'organizations', organizationId, 'settings'),
-            where('notifications.reports.dailyDigest', '==', true)
-          )
-        );
+        const settingsSnapshot = await db
+          .collection('organizations')
+          .doc(organizationId)
+          .collection('settings')
+          .where('notifications.reports.dailyDigest', '==', true)
+          .get();
         
         // Skip if daily digest is not enabled
-        if (settingsDoc.empty) {
+        if (settingsSnapshot.empty) {
           continue;
         }
         

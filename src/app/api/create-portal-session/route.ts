@@ -1,25 +1,57 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getFirestore } from 'firebase-admin/firestore';
-import { auth } from '@/lib/firebase';
+import { getAuth } from 'firebase-admin/auth';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+
+// Initialize Firebase Admin if not already initialized
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '',
+      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY 
+        ? process.env.FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, '\n')
+        : '',
+    }),
+  });
+}
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
   apiVersion: '2023-10-16',
 });
 
-// Get Firestore from the webhook.ts file where admin is already initialized
+// Get Firestore from Firebase Admin
 const db = getFirestore();
+const auth = getAuth();
 
 export async function POST(request: Request) {
   try {
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
+    // Extract the authorization header
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
+
+    // Extract the token
+    const token = authHeader.split('Bearer ')[1];
+    
+    // Verify the token using Firebase Admin
+    let decodedToken;
+    try {
+      decodedToken = await auth.verifyIdToken(token);
+    } catch (error) {
+      return NextResponse.json(
+        { error: 'Invalid token' },
+        { status: 401 }
+      );
+    }
+    
+    const userId = decodedToken.uid;
 
     const body = await request.json();
     const { organizationId } = body;
@@ -32,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     // Verify user has access to this organization
-    const userDoc = await db.collection('users').doc(currentUser.uid).get();
+    const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists || userDoc.data()?.organizationId !== organizationId) {
       return NextResponse.json(
         { error: 'You do not have access to this organization' },

@@ -5,16 +5,32 @@ import {
   testCriticalIncidentNotification,
   testFormSubmissionNotification
 } from '../../../../services/email/test-email';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import type { Organization } from '@/types';
+
+// Initialize Firebase Admin if not already initialized
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '',
+      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY 
+        ? process.env.FIREBASE_ADMIN_PRIVATE_KEY.replace(/\\n/g, '\n')
+        : '',
+    }),
+  });
+}
+
+// Get Firestore from Firebase Admin
+const db = getFirestore();
 
 // Helper function to get organization
 async function getOrganization(organizationId: string): Promise<Organization | null> {
   try {
-    const orgDoc = await getDoc(doc(db, 'organizations', organizationId));
-    if (orgDoc.exists()) {
-      const orgData = orgDoc.data();
+    const orgDoc = await db.collection('organizations').doc(organizationId).get();
+    if (orgDoc.exists) {
+      const orgData = orgDoc.data() || {};
       
       // Create a proper Organization object with all required fields
       const org: Organization = {
@@ -33,8 +49,17 @@ async function getOrganization(organizationId: string): Promise<Organization | n
           seatsUsed: 1,
           expiresAt: new Date()
         },
-        createdAt: orgData.createdAt?.toDate ? orgData.createdAt.toDate() : new Date(),
+        createdAt: new Date(),
       };
+      
+      // Handle Firestore timestamps for createdAt and expiresAt
+      if (orgData.createdAt && orgData.createdAt._seconds) {
+        org.createdAt = new Date(orgData.createdAt._seconds * 1000);
+      }
+      
+      if (orgData.license?.expiresAt?._seconds) {
+        org.license.expiresAt = new Date(orgData.license.expiresAt._seconds * 1000);
+      }
       
       return org;
     }
