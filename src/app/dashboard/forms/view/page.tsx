@@ -6,7 +6,7 @@ import { doc, getDoc, setDoc, collection, addDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/contexts/auth-context"
 import { useOrganization } from "@/contexts/organization-context"
-import { FormTemplate, FormSubmission, SubmissionStatus } from "@/types/forms"
+import { FormTemplate, FormSubmission, SubmissionStatus } from "@/src/types/forms"
 import { FormRenderer } from "@/components/forms/form-renderer"
 import { Button } from "@/components/ui/button"
 import { 
@@ -20,6 +20,8 @@ import { toast } from "sonner"
 import { ArrowLeft, ClipboardCheck, AlertTriangle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { v4 as uuidv4 } from "uuid"
+import { uploadFile, getFormSubmissionAttachmentPath } from "@/src/lib/upload"
+import { toDate } from '@/lib/firebase-utils'
 
 export default function ViewFormPage() {
   const searchParams = useSearchParams()
@@ -44,37 +46,48 @@ export default function ViewFormPage() {
       }
       
       try {
+        setIsLoading(true)
         const formRef = doc(db, "organizations", organization.id, "formTemplates", formId)
         const formDoc = await getDoc(formRef)
         
         if (formDoc.exists()) {
-          const formData = formDoc.data() as FormTemplate
+          // Get the raw document data
+          const rawFormData = formDoc.data();
           
-          // Convert Firestore timestamps to Date objects
-          const formWithDates = {
-            ...formData,
-            createdAt: formData.createdAt?.toDate() || new Date(),
-            updatedAt: formData.updatedAt?.toDate() || new Date(),
-          }
+          // Create a properly typed FormTemplate object
+          const formTemplate: FormTemplate = {
+            id: formDoc.id,
+            // Spread all the raw data first
+            ...rawFormData,
+            // Override with properly handled timestamps
+            createdAt: toDate(rawFormData.createdAt) || new Date(),
+            updatedAt: toDate(rawFormData.updatedAt) || new Date(),
+            // Ensure all required fields are present with defaults if needed
+            organizationId: rawFormData.organizationId || organization.id,
+            name: rawFormData.name || 'Untitled Form',
+            category: rawFormData.category || 'other',
+            createdBy: rawFormData.createdBy || user?.uid || 'unknown',
+            fields: rawFormData.fields || [],
+            isActive: rawFormData.isActive !== undefined ? rawFormData.isActive : true,
+            version: rawFormData.version || 1,
+            isLatestVersion: rawFormData.isLatestVersion !== undefined ? rawFormData.isLatestVersion : true
+          };
           
-          if (!formWithDates.isActive) {
-            setFormError("This form is no longer active")
-          }
-          
-          setForm(formWithDates)
+          setForm(formTemplate);
         } else {
-          setFormError("Form not found")
+          toast.error("Form not found")
+          router.push("/dashboard/forms")
         }
       } catch (error) {
         console.error("Error loading form:", error)
-        setFormError("Failed to load form")
+        toast.error("Failed to load form")
       } finally {
         setIsLoading(false)
       }
     }
     
     loadForm()
-  }, [formId, organization?.id])
+  }, [formId, organization?.id, router])
   
   // Handle form submission
   const handleSubmit = async (formData: Record<string, any>) => {
@@ -86,15 +99,58 @@ export default function ViewFormPage() {
     try {
       setIsSubmitting(true)
       
+      // Process file uploads and replace file objects with download URLs
+      const processedFormData = { ...formData }
+      const fileUploadPromises: Promise<string>[] = []
+      const fileAttachmentUrls: string[] = []
+      
+      // Process each field to find file uploads
+      for (const fieldId in formData) {
+        const fieldValue = formData[fieldId]
+        const field = form.fields?.find(f => f.id === fieldId)
+        
+        // Handle file uploads for file type fields
+        if (field?.type === 'file' && fieldValue && fieldValue.file) {
+          const submissionId = uuidv4() // Generate ID for the submission
+          
+          // Create a path for the file in Firebase Storage
+          const path = getFormSubmissionAttachmentPath(
+            organization.id,
+            form.id,
+            submissionId
+          )
+          
+          // Create a promise to upload the file
+          const uploadPromise = uploadFile(fieldValue.file, path)
+            .then(downloadUrl => {
+              // Store the download URL in the processed form data
+              processedFormData[fieldId] = downloadUrl
+              // Also add to the attachments array
+              fileAttachmentUrls.push(downloadUrl)
+              return downloadUrl
+            })
+          
+          fileUploadPromises.push(uploadPromise)
+        }
+      }
+      
+      // Wait for all file uploads to complete
+      if (fileUploadPromises.length > 0) {
+        await Promise.all(fileUploadPromises)
+      }
+      
       // Create submission object
       const submission: FormSubmission = {
         id: uuidv4(),
         formTemplateId: form.id,
+        formVersion: form.version || 1,
         organizationId: organization.id,
-        submittedBy: user.uid,
+        submittedBy: user?.uid || 'anonymous',
         submittedAt: new Date(),
+        lastUpdatedAt: new Date(),
         status: "submitted" as SubmissionStatus,
-        values: formData
+        values: processedFormData,
+        attachments: fileAttachmentUrls.length > 0 ? fileAttachmentUrls : undefined
       }
       
       // Save to Firestore
@@ -129,9 +185,11 @@ export default function ViewFormPage() {
       const draftSubmission: FormSubmission = {
         id: uuidv4(),
         formTemplateId: form.id,
+        formVersion: form.version || 1,
         organizationId: organization.id,
-        submittedBy: user.uid,
+        submittedBy: user?.uid || 'anonymous',
         submittedAt: new Date(),
+        lastUpdatedAt: new Date(),
         status: "draft" as SubmissionStatus,
         values: formData
       }

@@ -8,7 +8,8 @@ export type FieldType =
   | 'multiselect' 
   | 'checkbox' 
   | 'radio' 
-  | 'file';
+  | 'file'
+  | 'employeeList';
 
 // Form categories
 export type FormCategory = 
@@ -16,6 +17,24 @@ export type FormCategory =
   | 'recognition' 
   | 'heatPrevention' 
   | 'other';
+
+// Industry types for templates
+export type IndustryType =
+  | 'construction'
+  | 'manufacturing'
+  | 'transportation'
+  | 'healthcare'
+  | 'general'
+  | 'utilities'
+  | 'mining'
+  | 'oil_and_gas'
+  | 'agriculture';
+
+// Template complexity level
+export type ComplexityLevel =
+  | 'basic'
+  | 'intermediate'
+  | 'advanced';
 
 // Form submission status
 export type SubmissionStatus = 
@@ -72,6 +91,32 @@ export interface FormTemplate {
   // Version control
   version: number;
   previousVersionId?: string;
+  isLatestVersion: boolean;
+  
+  // If template was copied from the system template library
+  copiedFromTemplateId?: string;
+}
+
+// System form template (pre-built templates provided by the platform)
+export interface SystemFormTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: FormCategory;
+  createdAt: Date;
+  updatedAt: Date;
+  
+  // Template metadata
+  industries: IndustryType[];
+  complexity: ComplexityLevel;
+  estimatedCompletionTime: number; // in minutes
+  usageCount: number; // how many times this template has been copied
+  
+  // Template content
+  fields: FormField[];
+  
+  // Version control
+  version: number;
   isLatestVersion: boolean;
 }
 

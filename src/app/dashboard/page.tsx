@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/auth-context"
 import { useOrganization } from "@/contexts/organization-context"
 import { collection, query, getDocs, where, limit, orderBy } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { FormTemplate, FormSubmission } from "@/types/forms"
+import { FormTemplate, FormSubmission } from "@/src/types/forms"
 import { 
   Card, 
   CardContent, 
@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import { format } from "date-fns"
 import { Badge } from "@/components/ui/badge"
+import { toDate } from '@/lib/firebase-utils'
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -72,8 +73,8 @@ export default function DashboardPage() {
           const data = doc.data() as FormTemplate
           recentForms.push({
             ...data,
-            createdAt: data.createdAt?.toDate() || new Date(),
-            updatedAt: data.updatedAt?.toDate() || new Date(),
+            createdAt: toDate(data.createdAt) || new Date(),
+            updatedAt: toDate(data.updatedAt) || new Date(),
           })
         })
         
@@ -96,7 +97,7 @@ export default function DashboardPage() {
           const data = doc.data() as FormSubmission
           recentSubmissions.push({
             ...data,
-            submittedAt: data.submittedAt?.toDate() || new Date(),
+            submittedAt: toDate(data.submittedAt) || new Date(),
           })
         })
         

@@ -36,8 +36,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Building2, Clock, MapPin, Upload } from "lucide-react";
 import { useGeneralSettings, useWorkingHoursSettings, useBrandingSettings } from "../../../../hooks/use-organization-settings";
 import { useOrganization } from "@/contexts/organization-context";
-import { GeneralSettings, WorkingHoursSettings, BrandingSettings } from "@/lib/settings";
+import { GeneralSettings, WorkingHoursSettings, BrandingSettings } from "@/src/lib/settings";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { doc, updateDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const organizationSchema = z.object({
   name: z.string().min(2, {
@@ -310,6 +312,15 @@ export function OrganizationSettings() {
         variant: "destructive",
       });
     }
+  };
+
+  const updateOrganization = async (data: { name: string }) => {
+    if (!organization?.id) {
+      throw new Error("Organization ID not found");
+    }
+    
+    const orgRef = doc(db, "organizations", organization.id);
+    await updateDoc(orgRef, { name: data.name });
   };
 
   return (

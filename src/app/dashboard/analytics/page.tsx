@@ -4,9 +4,10 @@ import { useState, useEffect } from "react"
 import { useOrganization } from "@/contexts/organization-context"
 import { collection, query, getDocs, where, orderBy, limit } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { FormSubmission, FormTemplate, SubmissionStatus } from "@/types/forms"
+import { FormSubmission, FormTemplate, SubmissionStatus } from "@/src/types/forms"
 import { format, subMonths, isAfter, parseISO } from "date-fns"
 import * as XLSX from 'xlsx'
+import { processFirestoreData } from "@/lib/firebase-utils"
 
 import {
   Card,
@@ -127,12 +128,14 @@ export default function AnalyticsAndReportsPage() {
 
         const submissionsList: FormSubmission[] = []
         submissionsSnapshot.forEach((doc) => {
-          const submissionData = doc.data() as FormSubmission
+          const submissionData = doc.data() as FormSubmission;
+          const { id: _, ...dataWithoutId } = submissionData; // Remove any existing id
+          const processedData = processFirestoreData(dataWithoutId);
+          
           submissionsList.push({
-            ...submissionData,
             id: doc.id,
-            submittedAt: submissionData.submittedAt?.toDate() || new Date(),
-          })
+            ...processedData,
+          });
         })
 
         setSubmissions(submissionsList)
@@ -264,7 +267,7 @@ export default function AnalyticsAndReportsPage() {
       // Submissions by form
       const formData = [["Form Name", "Submission Count"]];
       Object.entries(formStats.submissionsByForm).forEach(([form, count]) => {
-        formData.push([form, count]);
+        formData.push([form, String(count)]);
       });
       
       const formWs = XLSX.utils.aoa_to_sheet(formData);
@@ -273,7 +276,7 @@ export default function AnalyticsAndReportsPage() {
       // Submissions by date
       const dateData = [["Month", "Submission Count"]];
       formStats.submissionsByDate.forEach(item => {
-        dateData.push([item.date, item.count]);
+        dateData.push([item.date, String(item.count)]);
       });
       
       const dateWs = XLSX.utils.aoa_to_sheet(dateData);

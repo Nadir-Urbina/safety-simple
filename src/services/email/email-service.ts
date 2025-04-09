@@ -35,7 +35,7 @@ export async function sendEmail(options: EmailOptions) {
       html,
       cc,
       bcc,
-      reply_to: replyTo,
+      replyTo: replyTo,
       attachments
     });
     

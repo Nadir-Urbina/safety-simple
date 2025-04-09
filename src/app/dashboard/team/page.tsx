@@ -25,6 +25,7 @@ import {
 } from "firebase/auth"
 import { db } from "@/lib/firebase"
 import * as XLSX from 'xlsx'
+import { toDate } from '@/lib/firebase-utils'
 
 import {
   Card,
@@ -96,19 +97,25 @@ import {
   Upload,
   FileText,
   HelpCircle,
-  AlertOctagon
+  AlertOctagon,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  RefreshCw
 } from "lucide-react"
 
 interface TeamMember {
-  id: string
-  uid: string
-  firstName: string
-  lastName: string
-  email: string
-  phone: string
-  role: "admin" | "analyst" | "user"
-  createdAt: Date
-  updatedAt: Date
+  id: string;
+  uid?: string;
+  userDocId?: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  role: string;
+  createdAt?: Date | null;
+  updatedAt?: Date | null;
+  status: string;
 }
 
 interface OrganizationSubscription {
@@ -150,64 +157,194 @@ export default function TeamPage() {
   
   const [newPassword, setNewPassword] = useState("")
   const [confirmNewPassword, setConfirmNewPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [showResetPassword, setShowResetPassword] = useState(false)
+  const [showConfirmResetPassword, setShowConfirmResetPassword] = useState(false)
+  
+  // New state for the info dialog
+  const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(false);
+  
+  // Add the current user to members collection if they don't exist there
+  const ensureCurrentUserInMembers = async () => {
+    if (!user || !organization?.id) return;
+    
+    try {
+      // Check if user exists in members collection
+      const membersRef = collection(db, "organizations", organization.id, "members");
+      const membersQuery = query(membersRef, where("uid", "==", user.uid));
+      const membersSnapshot = await getDocs(membersQuery);
+      
+      // If user doesn't exist in members, add them
+      if (membersSnapshot.empty) {
+        console.log("Adding current user to members collection");
+        
+        // Add user to organization members
+        await addDoc(collection(db, "organizations", organization.id, "members"), {
+          uid: user.uid,
+          role: user.role || "admin", // Default to admin if no role is set
+          addedAt: new Date(),
+        });
+        
+        toast.success("You have been added to the team members");
+      }
+    } catch (error) {
+      console.error("Error ensuring current user in members:", error);
+    }
+  };
   
   // Load team members and subscription data
   useEffect(() => {
     const loadTeamMembersAndSubscription = async () => {
-      if (!organization?.id) return
+      if (!organization?.id) {
+        console.log("No organization ID available");
+        return;
+      }
+      
+      console.log("Loading team members for organization:", organization.id);
       
       try {
         setIsLoading(true)
         
-        // Load team members
-        const membersRef = collection(db, "organizations", organization.id, "members")
-        const membersQuery = query(membersRef)
-        const membersSnapshot = await getDocs(membersQuery)
+        // First ensure the current user is in the members collection
+        await ensureCurrentUserInMembers();
         
-        const members: TeamMember[] = []
+        const membersRef = collection(db, "organizations", organization.id, "members");
+        const membersSnapshot = await getDocs(membersRef);
         
-        for (const memberDoc of membersSnapshot.docs) {
-          const memberData = memberDoc.data()
-          
-          // Get the user document from the users collection to get the full profile
-          const userDoc = await getDoc(doc(db, "users", memberData.uid))
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data()
-            
-            members.push({
-              id: memberDoc.id,
-              uid: memberData.uid,
-              firstName: userData.firstName || "",
-              lastName: userData.lastName || "",
-              email: userData.email || "",
-              phone: userData.phone || "",
-              role: memberData.role || "user",
-              createdAt: userData.createdAt?.toDate() || new Date(),
-              updatedAt: userData.updatedAt?.toDate() || new Date(),
-            })
-          }
+        if (membersSnapshot.empty) {
+          console.log("No members found in the collection");
+          setTeamMembers([]);
+          setFilteredMembers([]);
+          setIsLoading(false);
+          return;
         }
+
+        const memberPromises = membersSnapshot.docs.map(async (memberDoc) => {
+          const memberData = memberDoc.data();
+          console.log("Member data found:", memberData);
+          
+          // Case 1: Pending users with userDocId
+          if (memberData.status === "pending" && memberData.userDocId) {
+            try {
+              const pendingUserDoc = await getDoc(doc(db, "users", memberData.userDocId));
+              if (pendingUserDoc.exists()) {
+                const userData = pendingUserDoc.data();
+                return {
+                  id: memberDoc.id,
+                  userDocId: memberData.userDocId,
+                  firstName: userData.firstName || "",
+                  lastName: userData.lastName || "",
+                  email: userData.email || "",
+                  phone: userData.phone || "",
+                  role: memberData.role || "user",
+                  status: "pending",
+                  createdAt: toDate(memberData.addedAt),
+                };
+              }
+            } catch (error) {
+              console.error("Error fetching pending user:", error);
+            }
+          }
+          
+          // Case 2: Active users with uid
+          if (memberData.uid) {
+            try {
+              const userDoc = await getDoc(doc(db, "users", memberData.uid));
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                return {
+                  id: memberDoc.id,
+                  uid: memberData.uid,
+                  firstName: userData.firstName || userData.displayName?.split(' ')[0] || "",
+                  lastName: userData.lastName || userData.displayName?.split(' ').slice(1).join(' ') || "",
+                  email: userData.email || "",
+                  phone: userData.phone || "",
+                  role: memberData.role || userData.role || "user",
+                  status: memberData.status || "active",
+                  createdAt: toDate(userData.createdAt),
+                  updatedAt: toDate(userData.updatedAt),
+                };
+              }
+            } catch (error) {
+              console.error("Error fetching active user:", error);
+            }
+          }
+          
+          // Case 3: Fallback for any other case
+          return {
+            id: memberDoc.id,
+            firstName: "Unknown",
+            lastName: "User",
+            email: memberData.email || "",
+            phone: "",
+            role: memberData.role || "user",
+            status: memberData.status || "pending",
+          };
+        });
+        
+        let members = await Promise.all(memberPromises);
+        
+        // Filter out any undefined or null values
+        members = members.filter(member => member);
+        
+        // Log the retrieved members for debugging
+        console.log("Retrieved members:", members.length, "members");
         
         // Sort by role (admin first, then analyst, then user) and then by name
+        const roleOrder: Record<string, number> = { admin: 0, analyst: 1, user: 2 };
         members.sort((a, b) => {
-          const roleOrder = { admin: 1, analyst: 2, user: 3 }
-          const roleComparison = roleOrder[a.role] - roleOrder[b.role]
+          const roleA = roleOrder[a.role as keyof typeof roleOrder] || 999;
+          const roleB = roleOrder[b.role as keyof typeof roleOrder] || 999;
           
-          if (roleComparison !== 0) return roleComparison
+          if (roleA !== roleB) return roleA - roleB;
           
-          const nameA = `${a.firstName} ${a.lastName}`.toLowerCase()
-          const nameB = `${b.firstName} ${b.lastName}`.toLowerCase()
-          return nameA.localeCompare(nameB)
-        })
+          const nameA = `${a.firstName} ${a.lastName}`.toLowerCase();
+          const nameB = `${b.firstName} ${b.lastName}`.toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
         
-        setTeamMembers(members)
-        setFilteredMembers(members)
+        setTeamMembers(members);
+        setFilteredMembers(members);
+        
+        // Debug logs to see all members
+        console.log("All processed members:", JSON.stringify(members));
         
         // Load subscription data
         const subscriptionRef = doc(db, "organizations", organization.id, "subscription", "current")
         const subscriptionSnapshot = await getDoc(subscriptionRef)
         
+        // First check the organization document directly for licenses
+        const orgRef = doc(db, "organizations", organization.id);
+        const orgDoc = await getDoc(orgRef);
+        
+        if (orgDoc.exists()) {
+          const orgData = orgDoc.data();
+          console.log("Organization data:", orgData);
+          
+          // Check if we have a licenses field in the organization document
+          if (orgData.licenses) {
+            console.log("Found licenses in org data:", orgData.licenses);
+            
+            // Calculate total seats from all license types
+            const adminTotal = orgData.licenses.admin?.total || 0;
+            const analystTotal = orgData.licenses.analyst?.total || 0;
+            const userTotal = orgData.licenses.user?.total || 0;
+            const totalSeats = adminTotal + analystTotal + userTotal;
+            
+            // Set up subscription info
+            setSubscription({
+              tier: orgData.license?.plan || "basic",
+              seats: totalSeats,
+              expiresAt: orgData.license?.expiresAt ? toDate(orgData.license.expiresAt) || new Date() : new Date(Date.now() + 1000 * 60 * 60 * 24 * 365)
+            });
+            
+            setSeatsAvailable(Math.max(0, totalSeats - members.length));
+            return;
+          }
+        }
+        
+        // Fall back to the subscription collection if no licenses in organization document
         if (subscriptionSnapshot.exists()) {
           const subscriptionData = subscriptionSnapshot.data() as OrganizationSubscription
           setSubscription(subscriptionData)
@@ -251,6 +388,9 @@ export default function TeamPage() {
       )
       setFilteredMembers(filtered)
     }
+    
+    // Debug log filtered members
+    console.log("Current filtered members:", filteredMembers);
   }, [searchQuery, teamMembers])
   
   // Handle CSV/XLSX file upload
@@ -416,36 +556,88 @@ export default function TeamPage() {
       
       for (const memberDoc of membersSnapshot.docs) {
         const memberData = memberDoc.data()
-        const userDoc = await getDoc(doc(db, "users", memberData.uid))
         
-        if (userDoc.exists()) {
+        // Handle both legacy (uid-based) and new (userDocId-based) members
+        let userDoc;
+        
+        if (memberData.uid) {
+          // Legacy path - try direct UID lookup
+          userDoc = await getDoc(doc(db, "users", memberData.uid))
+          
+          // If direct lookup failed, try query by UID
+          if (!userDoc.exists()) {
+            const usersRef = collection(db, "users")
+            const userQuery = query(usersRef, where("uid", "==", memberData.uid))
+            const userSnapshot = await getDocs(userQuery)
+            
+            if (!userSnapshot.empty) {
+              userDoc = userSnapshot.docs[0]
+            }
+          }
+        } else if (memberData.userDocId) {
+          // New path - direct lookup by document ID
+          userDoc = await getDoc(doc(db, "users", memberData.userDocId))
+        }
+        
+        // Create member object - handle cases where user doc doesn't exist
+        let memberObject: TeamMember = {
+          id: memberDoc.id,
+          uid: memberData.uid || "pending",
+          firstName: "",
+          lastName: "",
+          email: "pending@user.com",
+          phone: "",
+          role: memberData.role as string,
+          createdAt: memberData.addedAt ? new Date(memberData.addedAt.seconds * 1000) : new Date(),
+          updatedAt: memberData.addedAt ? new Date(memberData.addedAt.seconds * 1000) : new Date(),
+          status: memberData.status as string || "active"
+        };
+        
+        if (userDoc && userDoc.exists()) {
           const userData = userDoc.data()
           
-          members.push({
-            id: memberDoc.id,
-            uid: memberData.uid,
-            firstName: userData.firstName || "",
-            lastName: userData.lastName || "",
-            email: userData.email || "",
+          // Get the user's name components, using displayName as fallback
+          const firstName = userData.firstName || (userData.displayName ? userData.displayName.split(" ")[0] : "");
+          const lastName = userData.lastName || (userData.displayName ? userData.displayName.split(" ").slice(1).join(" ") : "");
+          
+          // Update member object with user data
+          memberObject = {
+            ...memberObject,
+            firstName: firstName,
+            lastName: lastName,
+            email: userData.email || memberObject.email,
             phone: userData.phone || "",
-            role: memberData.role || "user",
-            createdAt: userData.createdAt?.toDate() || new Date(),
-            updatedAt: userData.updatedAt?.toDate() || new Date(),
-          })
+            status: userData.status || memberData.status || "active",
+            // Safely handle dates
+            createdAt: userData.createdAt ? new Date(userData.createdAt.seconds * 1000) : new Date(),
+            updatedAt: userData.updatedAt ? new Date(userData.updatedAt.seconds * 1000) : new Date(),
+          };
+        } else {
+          // Make a more user-friendly display for members without user records
+          if (memberData.status === "pending") {
+            memberObject.firstName = "Pending";
+            memberObject.lastName = "User";
+          } else {
+            memberObject.firstName = "User";
+            memberObject.lastName = `ID: ${(memberData.uid || "").substring(0, 6)}...`;
+          }
         }
+        
+        members.push(memberObject)
       }
       
       // Sort by role (admin first, then analyst, then user) and then by name
       members.sort((a, b) => {
-        const roleOrder = { admin: 1, analyst: 2, user: 3 }
-        const roleComparison = roleOrder[a.role] - roleOrder[b.role]
+        const roleOrder: Record<string, number> = { admin: 0, analyst: 1, user: 2 };
+        const roleA = roleOrder[a.role as keyof typeof roleOrder] || 999;
+        const roleB = roleOrder[b.role as keyof typeof roleOrder] || 999;
         
-        if (roleComparison !== 0) return roleComparison
+        if (roleA !== roleB) return roleA - roleB;
         
-        const nameA = `${a.firstName} ${a.lastName}`.toLowerCase()
-        const nameB = `${b.firstName} ${b.lastName}`.toLowerCase()
-        return nameA.localeCompare(nameB)
-      })
+        const nameA = `${a.firstName} ${a.lastName}`.toLowerCase();
+        const nameB = `${b.firstName} ${b.lastName}`.toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
       
       setTeamMembers(members)
       setFilteredMembers(members)
@@ -469,11 +661,28 @@ export default function TeamPage() {
     
     try {
       setIsLoading(true)
-      let successCount = 0
+      let successCount = 0;
+      
+      // Keep track of license adjustments
+      const licenseAdjustments: Record<string, number> = {
+        admin: 0,
+        analyst: 0,
+        user: 0
+      };
       
       for (const member of teamMembers) {
         if (member.role !== "user") {
           try {
+            // Adjust license counts
+            const oldRole = member.role.toLowerCase();
+            const newRole = "user";
+            
+            // Decrement old role count
+            licenseAdjustments[oldRole] -= 1;
+            
+            // Increment new role count
+            licenseAdjustments[newRole] += 1;
+            
             // Update organization member
             await updateDoc(doc(db, "organizations", organization.id, "members", member.id), {
               role: "user"
@@ -485,7 +694,33 @@ export default function TeamPage() {
         }
       }
       
+      // Apply license adjustments to the organization document
       if (successCount > 0) {
+        const orgRef = doc(db, "organizations", organization.id);
+        const orgDoc = await getDoc(orgRef);
+        
+        if (orgDoc.exists()) {
+          const orgData = orgDoc.data();
+          
+          // Update license counts for each role
+          const updates: Record<string, number> = {};
+          
+          for (const [role, adjustment] of Object.entries(licenseAdjustments)) {
+            if (adjustment !== 0 && orgData.licenses && orgData.licenses[role]) {
+              const currentUsed = orgData.licenses[role].used || 0;
+              const newValue = Math.max(0, currentUsed + adjustment);
+              
+              updates[`licenses.${role}.used`] = newValue;
+              console.log(`Adjusting ${role} license count: ${currentUsed} -> ${newValue}`);
+            }
+          }
+          
+          // Apply all updates at once
+          if (Object.keys(updates).length > 0) {
+            await updateDoc(orgRef, updates);
+          }
+        }
+        
         toast.success(`Updated ${successCount} team member(s) to User role`)
         // Refresh members list
         await refreshTeamMembers()
@@ -503,123 +738,81 @@ export default function TeamPage() {
   // Check if we can add more users
   const canAddUsers = seatsAvailable > 0
   
-  // Handle adding a new member
+  // Handle adding a new team member
   const handleAddMember = async () => {
-    if (!organization?.id) {
-      toast.error("Organization not found")
-      return
+    if (!organization?.id) return;
+    
+    // Validate form
+    if (!newMemberData.firstName.trim()) {
+      toast.error("Please enter a first name");
+      return;
+    }
+    if (!newMemberData.lastName.trim()) {
+      toast.error("Please enter a last name");
+      return;
+    }
+    if (!newMemberData.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberData.email)) {
+      toast.error("Please enter a valid email address");
+      return;
     }
     
-    // Check if we have seats available
-    if (seatsAvailable <= 0) {
-      toast.error("No seats available. Please upgrade your subscription to add more users.")
-      return
-    }
-    
-    // Validation
-    if (!newMemberData.firstName || !newMemberData.lastName || !newMemberData.email) {
-      toast.error("First name, last name, and email are required")
-      return
-    }
-    
-    if (!newMemberData.password) {
-      toast.error("Password is required")
-      return
-    }
-    
-    if (newMemberData.password !== newMemberData.confirmPassword) {
-      toast.error("Passwords do not match")
-      return
-    }
+    setIsLoading(true);
     
     try {
-      // Create the user in Firebase Auth
-      const auth = getAuth()
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        newMemberData.email,
-        newMemberData.password
-      )
+      // Call our new direct user creation API
+      const response = await fetch('/api/team/create-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          firstName: newMemberData.firstName,
+          lastName: newMemberData.lastName,
+          email: newMemberData.email,
+          phone: newMemberData.phone,
+          role: newMemberData.role,
+          organizationId: organization.id,
+        }),
+      });
       
-      const uid = userCredential.user.uid
+      const data = await response.json();
+      console.log("API response:", data);
       
-      // Create user document
-      await addDoc(collection(db, "users"), {
-        uid,
-        firstName: newMemberData.firstName,
-        lastName: newMemberData.lastName,
-        email: newMemberData.email,
-        phone: newMemberData.phone || "",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-      
-      // Add user to organization
-      await addDoc(collection(db, "organizations", organization.id, "members"), {
-        uid,
-        role: newMemberData.role,
-        addedAt: new Date(),
-      })
-      
-      toast.success("Team member added successfully")
-      
-      // Reset form and close dialog
-      setNewMemberData({
-        firstName: "",
-        lastName: "",
-        email: "",
-        phone: "",
-        role: "user",
-        password: "",
-        confirmPassword: "",
-      })
-      
-      setIsAddDialogOpen(false)
-      
-      // Refresh team members
-      const membersRef = collection(db, "organizations", organization.id, "members")
-      const membersQuery = query(membersRef)
-      const membersSnapshot = await getDocs(membersQuery)
-      
-      const members: TeamMember[] = []
-      
-      for (const memberDoc of membersSnapshot.docs) {
-        const memberData = memberDoc.data()
-        const userDoc = await getDoc(doc(db, "users", memberData.uid))
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          
-          members.push({
-            id: memberDoc.id,
-            uid: memberData.uid,
-            firstName: userData.firstName || "",
-            lastName: userData.lastName || "",
-            email: userData.email || "",
-            phone: userData.phone || "",
-            role: memberData.role || "user",
-            createdAt: userData.createdAt?.toDate() || new Date(),
-            updatedAt: userData.updatedAt?.toDate() || new Date(),
-          })
+      if (response.ok) {
+        if (data.partialSuccess) {
+          // User was created in Auth but had issues with other steps
+          toast.success(`${newMemberData.firstName} ${newMemberData.lastName} account created`);
+          toast.warning("Some operations didn't complete. The user may need to be set up manually.");
+          console.warn("Partial success:", data.message);
+        } else {
+          toast.success(`${newMemberData.firstName} ${newMemberData.lastName} has been added successfully`);
         }
-      }
-      
-      setTeamMembers(members)
-      setFilteredMembers(members)
-      
-      // Update seats available
-      if (subscription) {
-        setSeatsAvailable(Math.max(0, subscription.seats - members.length))
+        
+        // Reset form and close dialog
+        setNewMemberData({
+          firstName: "",
+          lastName: "",
+          email: "",
+          phone: "",
+          role: "user",
+          password: "",
+          confirmPassword: "",
+        });
+        setIsAddDialogOpen(false);
+        
+        // Reload team members
+        await refreshTeamMembers();
+      } else {
+        // Display the specific error message from the API
+        toast.error(data.message || 'Error creating user');
       }
     } catch (error: any) {
-      console.error("Error adding team member:", error)
-      if (error.code === "auth/email-already-in-use") {
-        toast.error("Email is already in use by another account")
-      } else {
-        toast.error("Failed to add team member")
-      }
+      console.error("Error adding team member:", error);
+      toast.error("Failed to add team member. Please try again later.");
+    } finally {
+      setIsLoading(false);
     }
-  }
+  };
   
   // Handle updating a member
   const handleUpdateMember = async () => {
@@ -629,6 +822,10 @@ export default function TeamPage() {
     }
     
     try {
+      // Find the original member to check if role has changed
+      const originalMember = teamMembers.find(m => m.id === selectedMember.id);
+      const roleChanged = originalMember && originalMember.role !== selectedMember.role;
+      
       // Update user document
       const usersRef = collection(db, "users")
       const userQuery = query(usersRef, where("uid", "==", selectedMember.uid))
@@ -649,6 +846,38 @@ export default function TeamPage() {
       await updateDoc(doc(db, "organizations", organization.id, "members", selectedMember.id), {
         role: selectedMember.role,
       })
+      
+      // Update license counts if role has changed
+      if (roleChanged && originalMember) {
+        const oldRole = originalMember.role.toLowerCase();
+        const newRole = selectedMember.role.toLowerCase();
+        
+        const orgRef = doc(db, "organizations", organization.id);
+        const orgDoc = await getDoc(orgRef);
+        
+        if (orgDoc.exists()) {
+          const orgData = orgDoc.data();
+          const updates: Record<string, number> = {};
+          
+          // Decrement the old role count
+          if (orgData.licenses && orgData.licenses[oldRole]) {
+            const oldRoleUsed = orgData.licenses[oldRole].used || 0;
+            updates[`licenses.${oldRole}.used`] = Math.max(0, oldRoleUsed - 1);
+          }
+          
+          // Increment the new role count
+          if (orgData.licenses && orgData.licenses[newRole]) {
+            const newRoleUsed = orgData.licenses[newRole].used || 0;
+            updates[`licenses.${newRole}.used`] = newRoleUsed + 1;
+          }
+          
+          // Apply all updates if there are any
+          if (Object.keys(updates).length > 0) {
+            await updateDoc(orgRef, updates);
+            console.log(`Updated license counts: ${oldRole} (-1), ${newRole} (+1)`);
+          }
+        }
+      }
       
       toast.success("Team member updated successfully")
       
@@ -675,8 +904,36 @@ export default function TeamPage() {
     }
     
     try {
+      // Get the member's role before deletion
+      const memberRole = selectedMember.role.toLowerCase(); // "admin", "analyst", or "user"
+      
       // Delete from organization
       await deleteDoc(doc(db, "organizations", organization.id, "members", selectedMember.id))
+      
+      // Update the specific license count based on role
+      const orgRef = doc(db, "organizations", organization.id);
+      const orgDoc = await getDoc(orgRef);
+      
+      if (orgDoc.exists()) {
+        const orgData = orgDoc.data();
+        
+        // Check if licenses structure exists
+        if (orgData.licenses && orgData.licenses[memberRole]) {
+          // Update the used count for the specific license type
+          const currentUsed = orgData.licenses[memberRole].used || 0;
+          
+          // Ensure we don't go below zero
+          const newUsed = Math.max(0, currentUsed - 1);
+          
+          await updateDoc(orgRef, {
+            [`licenses.${memberRole}.used`]: newUsed
+          });
+          
+          console.log(`Updated ${memberRole} license count: ${currentUsed} -> ${newUsed}`);
+        } else {
+          console.warn(`License structure for ${memberRole} not found in organization data`);
+        }
+      }
       
       // Note: We don't delete the user from Firebase Auth or the users collection
       // This is because they might be a member of other organizations
@@ -771,6 +1028,164 @@ export default function TeamPage() {
     }
   }
   
+  // Add a function to get a status badge
+  const getStatusBadge = (status: string = "active") => {
+    switch (status) {
+      case "pending":
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+            <AlertOctagon className="w-3 h-3 mr-1" />
+            Pending
+          </span>
+        )
+      case "disabled":
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+            <AlertOctagon className="w-3 h-3 mr-1" />
+            Disabled
+          </span>
+        )
+      default:
+        return null
+    }
+  }
+  
+  // Process user data for display
+  const processUserData = (userData: any, id: string) => {
+    return {
+      id,
+      ...userData,
+      createdAt: toDate(userData.createdAt) || new Date(),
+      updatedAt: toDate(userData.updatedAt) || new Date(),
+      lastLogin: userData.lastLogin ? toDate(userData.lastLogin) : null,
+    };
+  };
+  
+  // Add helper to render member cells based on status
+  const renderMemberName = (member: TeamMember) => {
+    if (member.status === "pending") {
+      return (
+        <div className="flex flex-col">
+          <div className="font-medium flex items-center">
+            <span>{member.firstName} {member.lastName}</span>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 px-2 ml-2"
+              onClick={() => setIsInfoDialogOpen(true)}
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div className="text-xs text-muted-foreground">Pending activation</div>
+        </div>
+      );
+    }
+    
+    return (
+      <span className="font-medium">
+        {member.firstName} {member.lastName}
+      </span>
+    );
+  };
+  
+  // Helper function to manually activate a pending user
+  const activatePendingUser = async (member: TeamMember) => {
+    toast.info("In a production environment, this would activate the user in Firebase Auth");
+    toast.info("This requires Firebase Admin SDK, which is typically done in a Cloud Function");
+    
+    // For now, just mark the user as active in the UI
+    const updatedMembers = teamMembers.map(m => 
+      m.id === member.id ? { ...m, status: "active" as const } : m
+    );
+    
+    setTeamMembers(updatedMembers);
+    setFilteredMembers(updatedMembers.filter(m => 
+      searchQuery.trim() === "" || 
+      `${m.firstName} ${m.lastName}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.phone.includes(searchQuery)
+    ));
+  };
+  
+  // Migrate a pending user to active
+  const migratePendingUser = async (memberDoc: any) => {
+    try {
+      const memberData = memberDoc.data();
+      if (memberData.status === "pending" && memberData.userDocId) {
+        const pendingUserDoc = await getDoc(doc(db, "users", memberData.userDocId));
+        
+        if (pendingUserDoc.exists()) {
+          const userData = pendingUserDoc.data();
+          
+          // Call our API to create the user properly
+          const response = await fetch('/api/team/create-user', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              firstName: userData.firstName || "Unknown",
+              lastName: userData.lastName || "User",
+              email: userData.email || "",
+              phone: userData.phone || "",
+              role: memberData.role || "user",
+              organizationId: organization?.id || "",
+            }),
+          });
+          
+          if (response.ok) {
+            // Delete the old member document
+            await deleteDoc(doc(db, "organizations", organization!.id, "members", memberDoc.id));
+            
+            // Success message
+            toast.success(`User ${userData.firstName} ${userData.lastName} has been migrated to the new system`);
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error("Error migrating pending user:", error);
+      return false;
+    }
+  };
+
+  // Add button to migrate users
+  const handleMigratePendingUsers = async () => {
+    if (!organization?.id) return;
+    
+    setIsLoading(true);
+    try {
+      // Get all members for this organization
+      const membersRef = collection(db, "organizations", organization.id, "members");
+      const membersSnapshot = await getDocs(membersRef);
+      
+      let migratedCount = 0;
+      
+      // Process each member
+      for (const memberDoc of membersSnapshot.docs) {
+        const memberData = memberDoc.data();
+        if (memberData.status === "pending" && memberData.userDocId) {
+          const migrated = await migratePendingUser(memberDoc);
+          if (migrated) migratedCount++;
+        }
+      }
+      
+      if (migratedCount > 0) {
+        toast.success(`Successfully migrated ${migratedCount} pending users`);
+        await refreshTeamMembers();
+      } else {
+        toast.info("No pending users found to migrate");
+      }
+    } catch (error) {
+      console.error("Error migrating pending users:", error);
+      toast.error("Failed to migrate pending users");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -783,139 +1198,315 @@ export default function TeamPage() {
   }
   
   return (
-    <div className="container py-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Team Management</h1>
-        <div className="flex items-center space-x-2">
-          <Dialog open={isCsvUploadDialogOpen} onOpenChange={setIsCsvUploadDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" disabled={!canAddUsers}>
-                <Upload className="w-4 h-4 mr-2" />
-                Import Users
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[525px]">
-              <DialogHeader>
-                <DialogTitle>Import Team Members</DialogTitle>
-                <DialogDescription>
-                  Upload a CSV or Excel file with team member data to add multiple users at once.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-amber-800 text-sm">
-                  <p className="font-medium flex items-center">
-                    <HelpCircle className="w-4 h-4 mr-2" />
-                    File Format Requirements
-                  </p>
-                  <p className="mt-1">
-                    Your file should have these columns: firstName, lastName, email, password, phone (optional), role (optional).
-                  </p>
-                  <p className="mt-1">
-                    Example: John,Doe,john.doe@example.com,password123,555-123-4567,user
-                  </p>
-                </div>
-                
-                {!canAddUsers && (
-                  <div className="bg-red-50 border border-red-200 rounded-md p-3 text-red-800 text-sm">
-                    <p className="font-medium flex items-center">
-                      <AlertOctagon className="w-4 h-4 mr-2" />
-                      No Seats Available
-                    </p>
-                    <p className="mt-1">
-                      You've reached your seat limit. Please remove unused users or upgrade your subscription to add more team members.
-                    </p>
-                  </div>
-                )}
-                
-                {canAddUsers && (
-                  <>
-                    <div className="flex flex-col space-y-1.5">
-                      <label htmlFor="csvFile">Upload File</label>
-                      <Input
-                        id="csvFile"
-                        type="file"
-                        accept=".csv,.xlsx,.xls"
-                        onChange={handleFileChange}
+    <div className="container mx-auto py-6">
+      <div className="flex flex-col space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Team Management</h1>
+          <div className="flex space-x-2">
+            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button disabled={!canAddUsers}>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Add Team Member
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[525px]">
+                <DialogHeader>
+                  <DialogTitle>Add New Team Member</DialogTitle>
+                  <DialogDescription>
+                    Add a new team member to your organization. They will receive an email with their login credentials.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label htmlFor="firstName" className="text-sm font-medium">
+                        First Name
+                      </label>
+                      <Input 
+                        id="firstName" 
+                        value={newMemberData.firstName}
+                        onChange={(e) => setNewMemberData({...newMemberData, firstName: e.target.value})}
+                        placeholder="John"
                       />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Accepted formats: CSV, Excel (.xlsx, .xls)
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="lastName" className="text-sm font-medium">
+                        Last Name
+                      </label>
+                      <Input 
+                        id="lastName" 
+                        value={newMemberData.lastName}
+                        onChange={(e) => setNewMemberData({...newMemberData, lastName: e.target.value})}
+                        placeholder="Doe"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="email" className="text-sm font-medium">
+                      Email
+                    </label>
+                    <Input 
+                      id="email" 
+                      type="email"
+                      value={newMemberData.email}
+                      onChange={(e) => setNewMemberData({...newMemberData, email: e.target.value})}
+                      placeholder="john.doe@example.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="phone" className="text-sm font-medium">
+                      Phone (Optional)
+                    </label>
+                    <Input 
+                      id="phone" 
+                      value={newMemberData.phone}
+                      onChange={(e) => setNewMemberData({...newMemberData, phone: e.target.value})}
+                      placeholder="(555) 123-4567"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="role" className="text-sm font-medium">
+                      Role
+                    </label>
+                    <Select 
+                      value={newMemberData.role}
+                      onValueChange={(value) => setNewMemberData({...newMemberData, role: value})}
+                    >
+                      <SelectTrigger id="role">
+                        <SelectValue placeholder="Select a role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="user">User</SelectItem>
+                        <SelectItem value="analyst">Analyst</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center">
+                      <HelpCircle className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        A secure password will be generated automatically and sent to the user via email.
                       </p>
                     </div>
-                    
-                    {csvData.length > 0 && (
-                      <div className="border rounded-md overflow-hidden">
-                        <div className="bg-muted p-2 text-sm font-medium">
-                          Preview: {csvData.length} users found
-                        </div>
-                        <div className="max-h-[200px] overflow-y-auto">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Name</TableHead>
-                                <TableHead>Email</TableHead>
-                                <TableHead>Role</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {csvData.slice(0, 5).map((row, index) => (
-                                <TableRow key={index}>
-                                  <TableCell>{row.firstName} {row.lastName}</TableCell>
-                                  <TableCell>{row.email}</TableCell>
-                                  <TableCell>{row.role || "user"}</TableCell>
-                                </TableRow>
-                              ))}
-                              {csvData.length > 5 && (
-                                <TableRow>
-                                  <TableCell colSpan={3} className="text-center text-muted-foreground">
-                                    ...and {csvData.length - 5} more
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {csvData.length > 0 && seatsAvailable < csvData.length && (
-                      <div className="bg-red-50 border border-red-200 rounded-md p-3 text-red-800 text-sm">
-                        <p className="font-medium flex items-center">
-                          <AlertOctagon className="w-4 h-4 mr-2" />
-                          Not Enough Seats
-                        </p>
-                        <p className="mt-1">
-                          You have {seatsAvailable} seats available but are trying to add {csvData.length} users.
-                          Please reduce the number of users in your file or upgrade your subscription.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleAddMember} disabled={isLoading}>
+                    {isLoading ? "Adding..." : "Add Member"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Team Members</CardTitle>
+              <CardDescription>
+                Manage users in your organization. Control who has access to your safety data.
+              </CardDescription>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center">
+                <FileText className="h-5 w-5 mr-2 text-muted-foreground" />
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-semibold text-foreground">{teamMembers.length}</span> / <span className="font-semibold text-foreground">{subscription?.seats || 0}</span> seats used
+                  <div className="text-xs">
+                    {seatsAvailable} available
+                  </div>
+                </div>
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCsvUploadDialogOpen(false)}>Cancel</Button>
-                <Button 
-                  onClick={processImportedData} 
-                  disabled={csvData.length === 0 || isCsvProcessing || seatsAvailable < csvData.length}
-                >
-                  {isCsvProcessing ? "Processing..." : "Import Users"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button disabled={!canAddUsers}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                Add Team Member
-              </Button>
-            </DialogTrigger>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <span className="mr-2">Bulk Actions</span>
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setIsCsvUploadDialogOpen(true)}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Import Users from CSV
+                  </DropdownMenuItem>
+                  {teamMembers.some(member => member.status === "pending") && (
+                    <DropdownMenuItem onClick={handleMigratePendingUsers} disabled={isLoading}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      {isLoading ? "Migrating..." : "Migrate Pending Users"}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </CardHeader>
+
+          {/* Migration Banner - only show if there are pending users */}
+          {teamMembers.some(member => member.status === "pending") && (
+            <div className="mx-6 mb-4 bg-amber-50 border border-amber-200 rounded-md p-4">
+              <div className="flex items-start space-x-4">
+                <AlertOctagon className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h3 className="font-medium text-amber-800">Legacy User Records Detected</h3>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Some users were created with the old system and need to be migrated to the new direct account creation system.
+                  </p>
+                  <div className="mt-3">
+                    <Button 
+                      variant="outline" 
+                      className="bg-white hover:bg-amber-50 border-amber-300 text-amber-800"
+                      onClick={handleMigratePendingUsers}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? "Migrating Users..." : "Migrate All Pending Users"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <CardContent>
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Search by name, email or phone..."
+                  className="pl-8"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+            </div>
+            
+            {filteredMembers.length === 0 ? (
+              <div className="text-center py-12 border-2 border-dashed rounded-md">
+                <User className="mx-auto h-12 w-12 text-muted-foreground" />
+                <h3 className="mt-4 text-lg font-semibold">No team members found</h3>
+                <p className="text-muted-foreground mt-2">
+                  {searchQuery ? "No members match your search criteria." : "Add your first team member to get started."}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Contact</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredMembers.map((member) => (
+                      <TableRow key={member.id}>
+                        <TableCell className="font-medium">
+                          {renderMemberName(member)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col space-y-1">
+                            <span className="flex items-center text-sm">
+                              <Mail className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                              {member.email}
+                            </span>
+                            {member.phone && (
+                              <span className="flex items-center text-sm">
+                                <Phone className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                                {member.phone}
+                              </span>
+                            )}
+                            {member.status && member.status !== "active" && (
+                              <span className="mt-1">
+                                {getStatusBadge(member.status)}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{getRoleBadge(member.role)}</TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedMember(member)
+                                  setIsEditDialogOpen(true)
+                                }}
+                              >
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedMember(member)
+                                  setIsResetPasswordDialogOpen(true)
+                                  setNewPassword("")
+                                  setConfirmNewPassword("")
+                                }}
+                              >
+                                <Lock className="mr-2 h-4 w-4" />
+                                Reset Password
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-red-600"
+                                onClick={() => {
+                                  setSelectedMember(member)
+                                  setIsDeleteAlertOpen(true)
+                                }}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Remove
+                              </DropdownMenuItem>
+                              {member.status === "pending" && (
+                                <DropdownMenuItem onClick={() => activatePendingUser(member)}>
+                                  <Shield className="mr-2 h-4 w-4" />
+                                  Activate User
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+          <CardFooter className="text-sm text-muted-foreground flex justify-between">
+            {filteredMembers.length > 0 && (
+              <div>Showing {filteredMembers.length} of {teamMembers.length} team members</div>
+            )}
+            {!canAddUsers && (
+              <div className="text-amber-600 flex items-center">
+                <AlertOctagon className="w-4 h-4 mr-1.5" />
+                You've reached your seat limit
+              </div>
+            )}
+          </CardFooter>
+        </Card>
+        
+        {/* Edit Member Dialog */}
+        {selectedMember && (
+          <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
             <DialogContent className="sm:max-w-[525px]">
               <DialogHeader>
-                <DialogTitle>Add New Team Member</DialogTitle>
+                <DialogTitle>Edit Team Member</DialogTitle>
                 <DialogDescription>
-                  Add a new team member to your organization. They will receive an email invitation.
+                  Update information for {selectedMember.firstName} {selectedMember.lastName}.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
@@ -924,16 +1515,16 @@ export default function TeamPage() {
                     <label htmlFor="firstName">First Name</label>
                     <Input
                       id="firstName"
-                      value={newMemberData.firstName}
-                      onChange={(e) => setNewMemberData({ ...newMemberData, firstName: e.target.value })}
+                      value={selectedMember.firstName}
+                      onChange={(e) => setSelectedMember({ ...selectedMember, firstName: e.target.value })}
                     />
                   </div>
                   <div className="flex flex-col space-y-1.5">
                     <label htmlFor="lastName">Last Name</label>
                     <Input
                       id="lastName"
-                      value={newMemberData.lastName}
-                      onChange={(e) => setNewMemberData({ ...newMemberData, lastName: e.target.value })}
+                      value={selectedMember.lastName}
+                      onChange={(e) => setSelectedMember({ ...selectedMember, lastName: e.target.value })}
                     />
                   </div>
                 </div>
@@ -942,23 +1533,23 @@ export default function TeamPage() {
                   <Input
                     id="email"
                     type="email"
-                    value={newMemberData.email}
-                    onChange={(e) => setNewMemberData({ ...newMemberData, email: e.target.value })}
+                    value={selectedMember.email}
+                    onChange={(e) => setSelectedMember({ ...selectedMember, email: e.target.value })}
                   />
                 </div>
                 <div className="flex flex-col space-y-1.5">
                   <label htmlFor="phone">Phone (Optional)</label>
                   <Input
                     id="phone"
-                    value={newMemberData.phone}
-                    onChange={(e) => setNewMemberData({ ...newMemberData, phone: e.target.value })}
+                    value={selectedMember.phone}
+                    onChange={(e) => setSelectedMember({ ...selectedMember, phone: e.target.value })}
                   />
                 </div>
                 <div className="flex flex-col space-y-1.5">
                   <label htmlFor="role">Role</label>
                   <Select
-                    value={newMemberData.role}
-                    onValueChange={(value) => setNewMemberData({ ...newMemberData, role: value as any })}
+                    value={selectedMember.role}
+                    onValueChange={(value) => setSelectedMember({ ...selectedMember, role: value as any })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select a role" />
@@ -970,334 +1561,144 @@ export default function TeamPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-col space-y-1.5">
-                  <label htmlFor="password">Password</label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={newMemberData.password}
-                    onChange={(e) => setNewMemberData({ ...newMemberData, password: e.target.value })}
-                  />
-                </div>
-                <div className="flex flex-col space-y-1.5">
-                  <label htmlFor="confirmPassword">Confirm Password</label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={newMemberData.confirmPassword}
-                    onChange={(e) => setNewMemberData({ ...newMemberData, confirmPassword: e.target.value })}
-                  />
-                </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleAddMember}>Add Member</Button>
+                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleUpdateMember}>Save Changes</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
-      </div>
-      
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Team Members</CardTitle>
-              <CardDescription>
-                Manage users in your organization. Control who has access to your safety data.
-              </CardDescription>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <div className="flex items-center space-x-2">
-                  <FileText className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">
-                      {teamMembers.length} / {subscription?.seats || 0} seats used
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {seatsAvailable} available
-                    </p>
+        )}
+        
+        {/* Reset Password Dialog */}
+        {selectedMember && (
+          <Dialog open={isResetPasswordDialogOpen} onOpenChange={setIsResetPasswordDialogOpen}>
+            <DialogContent className="sm:max-w-[525px]">
+              <DialogHeader>
+                <DialogTitle>Reset Password</DialogTitle>
+                <DialogDescription>
+                  Set a new password for {selectedMember.firstName} {selectedMember.lastName}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-amber-800 text-sm">
+                  <p className="font-medium">Note about password reset</p>
+                  <p className="mt-1">
+                    For security reasons, this demo can only send a password reset email. In a production environment with Firebase Admin SDK, you would be able to set the password directly.
+                  </p>
+                </div>
+                
+                <div className="flex flex-col space-y-1.5">
+                  <label htmlFor="newPassword">New Password</label>
+                  <div className="relative">
+                    <Input
+                      id="newPassword"
+                      type={showResetPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                    <Button 
+                      type="button"
+                      variant="ghost" 
+                      size="sm" 
+                      className="absolute right-0 top-0 h-full px-3"
+                      onClick={() => setShowResetPassword(!showResetPassword)}
+                    >
+                      {showResetPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col space-y-1.5">
+                  <label htmlFor="confirmNewPassword">Confirm New Password</label>
+                  <div className="relative">
+                    <Input
+                      id="confirmNewPassword"
+                      type={showConfirmResetPassword ? "text" : "password"}
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    />
+                    <Button 
+                      type="button"
+                      variant="ghost" 
+                      size="sm" 
+                      className="absolute right-0 top-0 h-full px-3"
+                      onClick={() => setShowConfirmResetPassword(!showConfirmResetPassword)}
+                    >
+                      {showConfirmResetPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    </Button>
                   </div>
                 </div>
               </div>
-              {teamMembers.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <UserCog className="h-4 w-4 mr-2" />
-                      Bulk Actions
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>Role Management</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={updateRolesToUser}>
-                      <User className="mr-2 h-4 w-4" />
-                      Set All to User Role
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search by name, email or phone..."
-                className="pl-8"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </div>
-          
-          {filteredMembers.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed rounded-md">
-              <User className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-semibold">No team members found</h3>
-              <p className="text-muted-foreground mt-2">
-                {searchQuery ? "No members match your search criteria." : "Add your first team member to get started."}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Contact</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredMembers.map((member) => (
-                    <TableRow key={member.id}>
-                      <TableCell className="font-medium">
-                        {member.firstName} {member.lastName}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col space-y-1">
-                          <span className="flex items-center text-sm">
-                            <Mail className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
-                            {member.email}
-                          </span>
-                          {member.phone && (
-                            <span className="flex items-center text-sm">
-                              <Phone className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
-                              {member.phone}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getRoleBadge(member.role)}</TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedMember(member)
-                                setIsEditDialogOpen(true)
-                              }}
-                            >
-                              <Edit className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedMember(member)
-                                setIsResetPasswordDialogOpen(true)
-                                setNewPassword("")
-                                setConfirmNewPassword("")
-                              }}
-                            >
-                              <Lock className="mr-2 h-4 w-4" />
-                              Reset Password
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-red-600"
-                              onClick={() => {
-                                setSelectedMember(member)
-                                setIsDeleteAlertOpen(true)
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Remove
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-        <CardFooter className="text-sm text-muted-foreground flex justify-between">
-          {filteredMembers.length > 0 && (
-            <div>Showing {filteredMembers.length} of {teamMembers.length} team members</div>
-          )}
-          {!canAddUsers && (
-            <div className="text-amber-600 flex items-center">
-              <AlertOctagon className="w-4 h-4 mr-1.5" />
-              You've reached your seat limit
-            </div>
-          )}
-        </CardFooter>
-      </Card>
-      
-      {/* Edit Member Dialog */}
-      {selectedMember && (
-        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="sm:max-w-[525px]">
-            <DialogHeader>
-              <DialogTitle>Edit Team Member</DialogTitle>
-              <DialogDescription>
-                Update information for {selectedMember.firstName} {selectedMember.lastName}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col space-y-1.5">
-                  <label htmlFor="firstName">First Name</label>
-                  <Input
-                    id="firstName"
-                    value={selectedMember.firstName}
-                    onChange={(e) => setSelectedMember({ ...selectedMember, firstName: e.target.value })}
-                  />
-                </div>
-                <div className="flex flex-col space-y-1.5">
-                  <label htmlFor="lastName">Last Name</label>
-                  <Input
-                    id="lastName"
-                    value={selectedMember.lastName}
-                    onChange={(e) => setSelectedMember({ ...selectedMember, lastName: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col space-y-1.5">
-                <label htmlFor="email">Email</label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={selectedMember.email}
-                  onChange={(e) => setSelectedMember({ ...selectedMember, email: e.target.value })}
-                />
-              </div>
-              <div className="flex flex-col space-y-1.5">
-                <label htmlFor="phone">Phone (Optional)</label>
-                <Input
-                  id="phone"
-                  value={selectedMember.phone}
-                  onChange={(e) => setSelectedMember({ ...selectedMember, phone: e.target.value })}
-                />
-              </div>
-              <div className="flex flex-col space-y-1.5">
-                <label htmlFor="role">Role</label>
-                <Select
-                  value={selectedMember.role}
-                  onValueChange={(value) => setSelectedMember({ ...selectedMember, role: value as any })}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleResetPassword}>Reset Password</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+        
+        {/* Delete Member Alert */}
+        {selectedMember && (
+          <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove Team Member</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to remove {selectedMember.firstName} {selectedMember.lastName} from your organization? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-red-600 text-white hover:bg-red-700"
+                  onClick={handleDeleteMember}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="analyst">Analyst</SelectItem>
-                    <SelectItem value="user">User</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleUpdateMember}>Save Changes</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-      
-      {/* Reset Password Dialog */}
-      {selectedMember && (
-        <Dialog open={isResetPasswordDialogOpen} onOpenChange={setIsResetPasswordDialogOpen}>
-          <DialogContent className="sm:max-w-[525px]">
+                  Remove
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+        
+        {/* Info Dialog */}
+        <Dialog open={isInfoDialogOpen} onOpenChange={setIsInfoDialogOpen}>
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Reset Password</DialogTitle>
+              <DialogTitle>About Team Management</DialogTitle>
               <DialogDescription>
-                Set a new password for {selectedMember.firstName} {selectedMember.lastName}.
+                How user creation works in your safety platform
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-amber-800 text-sm">
-                <p className="font-medium">Note about password reset</p>
-                <p className="mt-1">
-                  For security reasons, this demo can only send a password reset email. In a production environment with Firebase Admin SDK, you would be able to set the password directly.
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <h4 className="font-medium">User Creation Process</h4>
+                <p className="text-sm text-muted-foreground">
+                  When you add a new team member:
                 </p>
+                <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
+                  <li>The system creates a complete account with a secure temporary password</li>
+                  <li>An email is sent to the user with their login credentials</li>
+                  <li>The user can immediately log in with the provided credentials</li>
+                  <li>They should change their password after first login for security</li>
+                </ul>
               </div>
-              
-              <div className="flex flex-col space-y-1.5">
-                <label htmlFor="newPassword">New Password</label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col space-y-1.5">
-                <label htmlFor="confirmNewPassword">Confirm New Password</label>
-                <Input
-                  id="confirmNewPassword"
-                  type="password"
-                  value={confirmNewPassword}
-                  onChange={(e) => setConfirmNewPassword(e.target.value)}
-                />
+              <div className="space-y-2">
+                <h4 className="font-medium">User Roles</h4>
+                <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
+                  <li><strong>Admin:</strong> Full access to all platform features and team management</li>
+                  <li><strong>Analyst:</strong> Can view, analyze, and report on safety data</li>
+                  <li><strong>User:</strong> Basic access to submit forms and view relevant information</li>
+                </ul>
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleResetPassword}>Reset Password</Button>
+              <Button onClick={() => setIsInfoDialogOpen(false)}>
+                Close
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      )}
-      
-      {/* Delete Member Alert */}
-      {selectedMember && (
-        <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove Team Member</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to remove {selectedMember.firstName} {selectedMember.lastName} from your organization? This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-red-600 text-white hover:bg-red-700"
-                onClick={handleDeleteMember}
-              >
-                Remove
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      </div>
     </div>
   )
 } 

@@ -27,8 +27,9 @@ export function useWeather({ defaultLocation }: UseWeatherProps = {}) {
       // Mock data
       setWeatherData({
         temperature: Math.floor(Math.random() * 15) + 75, // 75-90°F
-        heatIndex: Math.floor(Math.random() * 20) + 80, // 80-100
-        uvIndex: Math.floor(Math.random() * 10) + 1, // 1-10
+        heatIndex: Math.floor(Math.random() * 20) + 80, // 80-100°F
+        uvIndex: Math.floor(Math.random() * 11), // 0-11
+        humidity: Math.floor(Math.random() * 40) + 40, // 40-80%
         conditions: ["Sunny", "Partly Cloudy", "Cloudy", "Rainy"][Math.floor(Math.random() * 4)],
         location: locationString,
         timestamp: new Date(),
@@ -55,8 +56,9 @@ export function useWeather({ defaultLocation }: UseWeatherProps = {}) {
       // Mock data
       setWeatherData({
         temperature: Math.floor(Math.random() * 15) + 75, // 75-90°F
-        heatIndex: Math.floor(Math.random() * 20) + 80, // 80-100
-        uvIndex: Math.floor(Math.random() * 10) + 1, // 1-10
+        heatIndex: Math.floor(Math.random() * 20) + 80, // 80-100°F
+        uvIndex: Math.floor(Math.random() * 11), // 0-11
+        humidity: Math.floor(Math.random() * 40) + 40, // 40-80%
         conditions: ["Sunny", "Partly Cloudy", "Cloudy", "Rainy"][Math.floor(Math.random() * 4)],
         location: "Current Location",
         timestamp: new Date(),

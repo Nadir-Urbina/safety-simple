@@ -54,14 +54,23 @@ export function FormBuilder({
   // Initialize field tracking on mount
   useEffect(() => {
     if (formTemplate.fields) {
-      setFields(formTemplate.fields)
+      // Ensure all fields have unique IDs
+      const fieldsWithUniqueIds = formTemplate.fields.map(field => {
+        // If the ID is missing or a duplicate might exist, generate a new one
+        return {
+          ...field,
+          id: `${field.id || ''}_${uuidv4()}`
+        };
+      });
+      
+      setFields(fieldsWithUniqueIds);
     }
   }, [formTemplate.id])
   
   // Flag fields as new when added
   const addField = (type: FieldType) => {
-    const newFieldId = uuidv4()
-    setNewFieldIds(prev => [...prev, newFieldId])
+    const newFieldId = `new_${uuidv4()}`;
+    setNewFieldIds(prev => [...prev, newFieldId]);
     
     const newField: FormField = {
       id: newFieldId,
@@ -119,7 +128,7 @@ export function FormBuilder({
   
   const duplicateField = (index: number) => {
     const fieldToDuplicate = fields[index]
-    const newFieldId = uuidv4()
+    const newFieldId = `duplicate_${uuidv4()}`
     
     // Create a duplicate with a new ID
     const duplicatedField: FormField = {
@@ -257,6 +266,7 @@ export function FormBuilder({
               <SelectItem value="checkbox">Checkbox</SelectItem>
               <SelectItem value="radio">Radio Buttons</SelectItem>
               <SelectItem value="file">File Upload</SelectItem>
+              <SelectItem value="employeeList">Employee Select</SelectItem>
             </SelectContent>
           </Select>
         </CardHeader>

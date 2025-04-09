@@ -12,7 +12,22 @@ import {
 } from "firebase/auth"
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
-import type { UserData } from "@/types"
+import { processFirestoreData } from "@/lib/firebase-utils"
+
+// Define UserData interface here to avoid import issues
+interface UserData {
+  id: string
+  uid?: string // For compatibility with Firebase Auth
+  displayName: string
+  email: string
+  photoURL?: string | null // Updated to allow null
+  role: "admin" | "analyst" | "user"
+  organizationId: string
+  department?: string
+  jobTitle?: string
+  createdAt: Date
+  lastLogin: Date
+}
 
 interface AuthContextType {
   user: UserData | null
@@ -33,25 +48,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
+          // Set up a token refresh interval
+          const refreshTokenInterval = setInterval(async () => {
+            try {
+              // Refresh token every 50 minutes (Firebase tokens last 60 minutes)
+              // This ensures we refresh the token before it expires
+              const newToken = await firebaseUser.getIdToken(true);
+              console.log("Auth token refreshed");
+            } catch (refreshError) {
+              console.error("Error refreshing auth token:", refreshError);
+            }
+          }, 50 * 60 * 1000); // 50 minutes
+
+          // Store the interval so we can clear it later
+          // @ts-ignore - Adding a custom property to the user object
+          firebaseUser._tokenRefreshInterval = refreshTokenInterval;
+
           // Get additional user data from Firestore
           const userDocRef = doc(db, "users", firebaseUser.uid)
           const userDoc = await getDoc(userDocRef)
 
           if (userDoc.exists()) {
             // User exists in Firestore, update with latest data
-            const userData = userDoc.data() as Omit<UserData, "id">
-            const createdAt = userData.createdAt ? userData.createdAt.toDate() : new Date();
+            const userData = userDoc.data();
+            const processedData = processFirestoreData(userData);
             
+            // Create user data with both id and uid for compatibility
             setUser({
               id: firebaseUser.uid,
-              displayName: firebaseUser.displayName || userData.displayName,
-              email: firebaseUser.email || userData.email,
-              photoURL: firebaseUser.photoURL || userData.photoURL,
-              role: userData.role || "user",
-              organizationId: userData.organizationId || "",
-              department: userData.department,
-              jobTitle: userData.jobTitle,
-              createdAt: createdAt,
+              uid: firebaseUser.uid, // For compatibility
+              displayName: firebaseUser.displayName || processedData.displayName || "User",
+              email: firebaseUser.email || processedData.email || "",
+              photoURL: firebaseUser.photoURL || processedData.photoURL,
+              role: processedData.role || "user",
+              organizationId: processedData.organizationId || "",
+              department: processedData.department,
+              jobTitle: processedData.jobTitle,
+              createdAt: processedData.createdAt instanceof Date ? processedData.createdAt : new Date(),
               lastLogin: new Date(),
             })
 
@@ -61,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // User doesn't exist in Firestore yet (first login)
             setUser({
               id: firebaseUser.uid,
+              uid: firebaseUser.uid, // For compatibility
               displayName: firebaseUser.displayName || "User",
               email: firebaseUser.email || "",
               photoURL: firebaseUser.photoURL,
@@ -75,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Fallback to basic Firebase user data
           setUser({
             id: firebaseUser.uid,
+            uid: firebaseUser.uid, // For compatibility
             displayName: firebaseUser.displayName || "User",
             email: firebaseUser.email || "",
             photoURL: firebaseUser.photoURL,
@@ -90,7 +125,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
     })
 
-    return () => unsubscribe()
+    return () => {
+      unsubscribe();
+      // Clear any active token refresh intervals
+      if (auth.currentUser && (auth.currentUser as any)._tokenRefreshInterval) {
+        clearInterval((auth.currentUser as any)._tokenRefreshInterval);
+      }
+    }
   }, [])
 
   const signIn = async (email: string, password: string) => {

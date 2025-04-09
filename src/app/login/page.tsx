@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
@@ -19,9 +19,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { signIn } = useAuth()
+  const { signIn, user, isLoading: isAuthLoading } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
+
+  // Redirect if user is already logged in
+  useEffect(() => {
+    if (user && !isAuthLoading) {
+      console.log("User already logged in, redirecting to home")
+      router.push("/")
+    }
+  }, [user, isAuthLoading, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -30,11 +38,15 @@ export default function LoginPage() {
 
     try {
       await signIn(email, password)
-      toast({
-        title: "Login successful",
-        description: "Welcome back to Safety-Simple!",
-      })
-      router.push("/")
+      
+      // Wait for auth state to update instead of redirecting immediately
+      setTimeout(() => {
+        toast({
+          title: "Login successful",
+          description: "Welcome back to Safety-Simple!",
+        })
+        router.push("/")
+      }, 500)
     } catch (error: any) {
       console.error("Login error:", error)
       setError(
@@ -45,6 +57,36 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Don't render the login form if already logged in
+  if (isAuthLoading) {
+    return (
+      <div className="gradient-background flex min-h-screen items-center justify-center p-4">
+        <Loader2 className="h-12 w-12 animate-spin text-white" />
+      </div>
+    )
+  }
+
+  if (user) {
+    return (
+      <div className="gradient-background flex min-h-screen items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-2xl font-bold">Already Logged In</CardTitle>
+            <CardDescription>You are already logged in as {user.email}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button 
+              className="w-full" 
+              onClick={() => router.push("/")}
+            >
+              Go to Home
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (

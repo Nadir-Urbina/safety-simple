@@ -16,7 +16,8 @@ import {
   limit 
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { FormTemplate, FormSubmission, SubmissionStatus } from "@/types/forms"
+import { FormTemplate, FormSubmission, SubmissionStatus } from "@/src/types/forms"
+import { HeatComplianceRecord, UnifiedSubmission } from "@/src/types"
 import { 
   Card, 
   CardContent, 
@@ -83,14 +84,37 @@ import {
   Search,
   Filter,
   FileText,
-  RefreshCw
+  RefreshCw,
+  ExternalLink,
+  Image,
+  UserIcon
 } from "lucide-react"
 import * as XLSX from 'xlsx'
 import { Checkbox } from "@/components/ui/checkbox"
+import { processFirestoreData, toDate } from '@/lib/firebase-utils'
 
 interface FormInfo {
   id: string;
   name: string;
+}
+
+async function getUserDisplayName(userId: string) {
+  try {
+    // First check if there's a user record in users collection
+    const userDoc = await getDoc(doc(db, "users", userId));
+    if (userDoc.exists() && userDoc.data().displayName) {
+      return userDoc.data().displayName;
+    }
+    
+    // Fallback to checking organization members if available
+    // This would require an extra query which might be expensive
+    // Add implementation if needed
+    
+    return userId; // Fallback to user ID if no name found
+  } catch (error) {
+    console.error("Error fetching user display name:", error);
+    return userId; // Fallback to ID on error
+  }
 }
 
 export default function SubmissionsPage() {
@@ -99,17 +123,17 @@ export default function SubmissionsPage() {
   const { user } = useAuth()
   const { organization } = useOrganization()
   
-  const [submissions, setSubmissions] = useState<FormSubmission[]>([])
-  const [filteredSubmissions, setFilteredSubmissions] = useState<FormSubmission[]>([])
+  const [unifiedSubmissions, setUnifiedSubmissions] = useState<UnifiedSubmission[]>([])
+  const [filteredSubmissions, setFilteredSubmissions] = useState<UnifiedSubmission[]>([])
   const [formsList, setFormsList] = useState<FormInfo[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  const [activeTab, setActiveTab] = useState<SubmissionStatus | "all">("all")
+  const [activeTab, setActiveTab] = useState<string>("all")
   const [selectedFormId, setSelectedFormId] = useState<string>("")
-  const [selectedSubmission, setSelectedSubmission] = useState<FormSubmission | null>(null)
+  const [selectedSubmission, setSelectedSubmission] = useState<UnifiedSubmission | null>(null)
   const [submissionDetails, setSubmissionDetails] = useState<{
-    submission: FormSubmission;
-    formTemplate: FormTemplate | null;
+    submission: UnifiedSubmission;
+    formTemplate?: FormTemplate | null;
     submitterName: string;
   } | null>(null)
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
@@ -147,7 +171,7 @@ export default function SubmissionsPage() {
           setFilterFormId(formIdParam)
         }
         
-        // Load submissions
+        // Load form submissions
         const submissionsRef = collection(db, "organizations", organization.id, "formSubmissions")
         let submissionsQuery = query(
           submissionsRef,
@@ -155,7 +179,7 @@ export default function SubmissionsPage() {
           limit(100)
         )
         
-        if (formIdParam && formIdParam !== 'all') {
+        if (formIdParam && formIdParam !== 'all' && formIdParam !== 'heat-jsa') {
           submissionsQuery = query(
             submissionsRef,
             where("formTemplateId", "==", formIdParam),
@@ -166,18 +190,77 @@ export default function SubmissionsPage() {
         
         const submissionsSnapshot = await getDocs(submissionsQuery)
         
-        const submissionsList: FormSubmission[] = []
+        const formSubmissionsList: UnifiedSubmission[] = []
+        const userDisplayNames: Record<string, string> = {}
+        
+        // First, collect all unique user IDs to batch our name lookups
+        const userIds = new Set<string>()
         submissionsSnapshot.forEach((doc) => {
           const submissionData = doc.data() as FormSubmission
-          // Convert Firestore timestamps to Date objects
-          submissionsList.push({
-            ...submissionData,
-            submittedAt: submissionData.submittedAt?.toDate() || new Date(),
+          userIds.add(submissionData.submittedBy)
+        })
+        
+        // Look up display names for all users
+        for (const userId of userIds) {
+          userDisplayNames[userId] = await getUserDisplayName(userId)
+        }
+        
+        // Now create the submissions with display names
+        submissionsSnapshot.forEach((doc) => {
+          const submissionData = doc.data() as FormSubmission
+          // Convert to unified submission format
+          formSubmissionsList.push({
+            id: submissionData.id,
+            type: 'form',
+            formId: submissionData.formTemplateId,
+            formName: getFormName(submissionData.formTemplateId),
+            organizationId: submissionData.organizationId,
+            submittedBy: submissionData.submittedBy,
+            submittedByName: userDisplayNames[submissionData.submittedBy] || submissionData.submittedBy,
+            submittedAt: toDate(submissionData.submittedAt) || new Date(),
+            status: submissionData.status,
+            category: 'form',
+            originalFormSubmission: submissionData
           })
         })
         
-        setSubmissions(submissionsList)
-        setFilteredSubmissions(submissionsList)
+        // Load heat compliance records
+        let heatJsaRecords: UnifiedSubmission[] = []
+        if (formIdParam === 'all' || formIdParam === 'heat-jsa' || !formIdParam) {
+          const heatComplianceRef = collection(db, "heatComplianceRecords")
+          const heatComplianceQuery = query(
+            heatComplianceRef, 
+            where("organizationId", "==", organization.id),
+            orderBy("createdAt", "desc"),
+            limit(100)
+          )
+          
+          const heatComplianceSnapshot = await getDocs(heatComplianceQuery)
+          
+          heatComplianceSnapshot.forEach((doc) => {
+            const recordData = doc.data() as HeatComplianceRecord
+            // Convert to unified submission format
+            heatJsaRecords.push({
+              id: doc.id,
+              type: 'heatCompliance',
+              formName: 'Heat JSA',
+              organizationId: recordData.organizationId,
+              submittedBy: recordData.submittedBy,
+              submittedByName: recordData.submittedByName,
+              submittedAt: toDate(recordData.createdAt) || new Date(),
+              status: recordData.status,
+              category: 'heatPrevention',
+              originalHeatRecord: recordData
+            })
+          })
+        }
+        
+        // Combine both types of submissions and sort by date
+        const allSubmissions = [...formSubmissionsList, ...heatJsaRecords]
+          .sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime())
+        
+        setUnifiedSubmissions(allSubmissions)
+        setFilteredSubmissions(allSubmissions)
       } catch (error) {
         console.error("Error loading data:", error)
         toast.error("Failed to load submissions")
@@ -193,11 +276,17 @@ export default function SubmissionsPage() {
   
   // Filter submissions based on search query and active tab
   useEffect(() => {
-    let filtered = [...submissions]
+    let filtered = [...unifiedSubmissions]
     
     // Filter by form if selected
     if (filterFormId && filterFormId !== 'all') {
-      filtered = filtered.filter(submission => submission.formTemplateId === filterFormId)
+      if (filterFormId === 'heat-jsa') {
+        filtered = filtered.filter(submission => submission.type === 'heatCompliance')
+      } else {
+        filtered = filtered.filter(submission => 
+          submission.type === 'form' && submission.formId === filterFormId
+        )
+      }
     }
     
     // Filter by status if not "all"
@@ -205,38 +294,82 @@ export default function SubmissionsPage() {
       filtered = filtered.filter(submission => submission.status === activeTab)
     }
     
-    // Apply search if provided (searching user id for now, would search name with proper user data)
+    // Apply search if provided
     if (searchQuery.trim() !== "") {
       const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(submission => 
-        submission.submittedBy.toLowerCase().includes(query)
-      )
+      filtered = filtered.filter(submission => {
+        // Search in submitter name if available
+        if (submission.submittedByName && 
+            submission.submittedByName.toLowerCase().includes(query)) {
+          return true
+        }
+        
+        // Search in form name
+        if (submission.formName && 
+            submission.formName.toLowerCase().includes(query)) {
+          return true
+        }
+        
+        // Search in location for heat records
+        if (submission.type === 'heatCompliance' && 
+            submission.originalHeatRecord?.location?.toLowerCase().includes(query)) {
+          return true
+        }
+        
+        // Search in submitter ID as fallback
+        return submission.submittedBy.toLowerCase().includes(query)
+      })
     }
     
     setFilteredSubmissions(filtered)
-  }, [submissions, searchQuery, activeTab, filterFormId])
+  }, [unifiedSubmissions, searchQuery, activeTab, filterFormId])
   
   // Function to get form name by ID
-  const getFormName = (formId: string) => {
-    const form = formsList.find(f => f.id === formId)
-    return form ? form.name : "Unknown Form"
-  }
+  const getFormName = (formId: string | undefined) => {
+    if (!formId) return "Unknown Form";
+    const form = formsList.find(f => f.id === formId);
+    return form ? form.name : "Unknown Form";
+  };
   
   // Update submission status
-  const updateSubmissionStatus = async (submissionId: string, newStatus: SubmissionStatus) => {
+  const updateSubmissionStatus = async (submission: UnifiedSubmission, newStatus: string) => {
     if (!organization?.id) return
     
     try {
-      // Would need to find the right doc reference from Firestore first in a real app
-      // For now, just update the local state
-      const updatedSubmissions = submissions.map(sub => {
-        if (sub.id === submissionId) {
+      if (submission.type === 'form') {
+        // Handle form submission status update
+        const submissionRef = doc(
+          db, 
+          "organizations", 
+          organization.id, 
+          "formSubmissions", 
+          submission.id
+        )
+        
+        await updateDoc(submissionRef, {
+          status: newStatus,
+          reviewedBy: user?.uid,
+          reviewedAt: new Date()
+        })
+      } else if (submission.type === 'heatCompliance') {
+        // Handle heat compliance record status update
+        const recordRef = doc(db, "heatComplianceRecords", submission.id)
+        
+        await updateDoc(recordRef, {
+          status: newStatus,
+          updatedAt: new Date()
+        })
+      }
+      
+      // Update local state
+      const updatedSubmissions = unifiedSubmissions.map(sub => {
+        if (sub.id === submission.id) {
           return { ...sub, status: newStatus }
         }
         return sub
       })
       
-      setSubmissions(updatedSubmissions)
+      setUnifiedSubmissions(updatedSubmissions)
       toast.success(`Submission marked as ${newStatus}`)
     } catch (error) {
       console.error("Error updating submission:", error)
@@ -245,27 +378,43 @@ export default function SubmissionsPage() {
   }
   
   // View submission details
-  const viewSubmissionDetails = async (submission: FormSubmission) => {
+  const viewSubmissionDetails = async (submission: UnifiedSubmission) => {
     if (!organization?.id) return
     
     try {
-      // Load the form template to understand field structure
-      const formRef = doc(db, "organizations", organization.id, "formTemplates", submission.formTemplateId)
-      const formDoc = await getDoc(formRef)
-      
-      let formTemplate = null
-      if (formDoc.exists()) {
-        formTemplate = formDoc.data() as FormTemplate
+      if (submission.type === 'form') {
+        // Load the form template to understand field structure
+        const formRef = doc(
+          db, 
+          "organizations", 
+          organization.id, 
+          "formTemplates", 
+          submission.formId || ''
+        )
+        const formDoc = await getDoc(formRef)
+        
+        let formTemplate = null
+        if (formDoc.exists()) {
+          formTemplate = formDoc.data() as FormTemplate
+        }
+        
+        // In a real app, you'd also load user info for submitter name
+        const submitterName = submission.submittedByName || submission.submittedBy
+        
+        setSubmissionDetails({
+          submission,
+          formTemplate,
+          submitterName
+        })
+      } else if (submission.type === 'heatCompliance') {
+        // Heat compliance records don't need a template
+        const submitterName = submission.submittedByName || submission.submittedBy
+        
+        setSubmissionDetails({
+          submission,
+          submitterName
+        })
       }
-      
-      // In a real app, you'd also load user info for submitter name
-      const submitterName = submission.submittedBy
-      
-      setSubmissionDetails({
-        submission,
-        formTemplate,
-        submitterName
-      })
       
       setShowDetailsDialog(true)
     } catch (error) {
@@ -275,7 +424,7 @@ export default function SubmissionsPage() {
   }
   
   // Get status badge
-  const getStatusBadge = (status: SubmissionStatus) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case "submitted":
         return <Badge variant="default">Submitted</Badge>
@@ -292,21 +441,19 @@ export default function SubmissionsPage() {
     }
   }
   
-  // Get status text (for export)
-  const getStatusText = (status: SubmissionStatus) => {
-    switch (status) {
-      case "submitted":
-        return "Submitted"
-      case "inReview":
-        return "In Review"
-      case "approved":
-        return "Approved"
-      case "rejected":
-        return "Rejected"
-      case "draft":
-        return "Draft"
-      default:
-        return status
+  // Get category badge
+  const getCategoryBadge = (submission: UnifiedSubmission) => {
+    if (submission.type === 'heatCompliance') {
+      return <Badge variant="warning">Heat JSA</Badge>
+    }
+    
+    // For form submissions
+    if (submission.category === 'incident') {
+      return <Badge variant="destructive">Incident</Badge>
+    } else if (submission.category === 'recognition') {
+      return <Badge variant="success">Recognition</Badge>
+    } else {
+      return <Badge variant="secondary">Form</Badge>
     }
   }
   
@@ -320,23 +467,26 @@ export default function SubmissionsPage() {
   
   // Export to Excel
   const exportToExcel = async () => {
-    try {
-      let excelData = []
-      
-      if (exportWithDetails && filteredSubmissions.length > 0) {
-        // More detailed export including form fields
-        // First, collect all unique field labels across all form templates
-        const uniqueFields = new Set<string>()
-        const formTemplatesMap = new Map<string, FormTemplate>()
-        
-        // Load all form templates used in filtered submissions
-        const formTemplateIds = Array.from(
-          new Set(filteredSubmissions.map(sub => sub.formTemplateId))
+    // More detailed export with field values
+    // First, collect all form template IDs that we need
+    const uniqueFields = new Set<string>()
+    const formTemplatesMap = new Map<string, FormTemplate>()
+    
+    // Load all form templates mentioned in the filtered submissions
+    if (organization?.id) {
+      try {
+        const formTemplateIds = new Set(
+          filteredSubmissions
+            .filter(sub => sub.type === 'form' && sub.formId)
+            .map(sub => sub.formId)
         )
         
-        if (organization?.id) {
+        if (formTemplateIds.size > 0) {
           for (const templateId of formTemplateIds) {
             try {
+              // Skip undefined templateIds
+              if (!templateId || !organization.id) continue;
+              
               const formRef = doc(db, "organizations", organization.id, "formTemplates", templateId)
               const formDoc = await getDoc(formRef)
               
@@ -347,105 +497,99 @@ export default function SubmissionsPage() {
                 // Collect fields from this template
                 template.fields?.forEach(field => {
                   if (!field.deprecated) {
-                    uniqueFields.add(field.label)
+                    uniqueFields.add(field.id)
                   }
                 })
               }
-            } catch (err) {
-              console.error(`Error loading form template ${templateId}:`, err)
+            } catch (error) {
+              console.error(`Error loading template ${templateId}:`, error)
             }
           }
         }
-        
-        // Create data with all possible fields
-        excelData = filteredSubmissions.map(submission => {
-          const baseData = {
-            'Form Name': getFormName(submission.formTemplateId),
-            'Submitted By': submission.submittedBy,
-            'Submission Date': format(submission.submittedAt, "MMM d, yyyy h:mm a"),
-            'Status': getStatusText(submission.status),
-            'Form ID': submission.formTemplateId,
-            'Submission ID': submission.id
-          }
-          
-          // Add field values if we have the template
-          const template = formTemplatesMap.get(submission.formTemplateId)
-          const fieldValues: Record<string, any> = {}
-          
-          if (template?.fields) {
-            template.fields
-              .filter(field => !field.deprecated)
-              .forEach(field => {
-                const value = submission.values[field.id]
-                let displayValue = ''
-                
-                if (value !== undefined && value !== null) {
-                  // Format based on field type
-                  switch (field.type) {
-                    case 'date':
-                      displayValue = value ? format(new Date(value), "yyyy-MM-dd") : ''
-                      break
-                    case 'select':
-                    case 'radio':
-                      const option = field.options?.find(o => o.value === value)
-                      displayValue = option?.label || value
-                      break
-                    case 'multiselect':
-                      if (Array.isArray(value)) {
-                        displayValue = value.map(v => {
-                          const opt = field.options?.find(o => o.value === v)
-                          return opt?.label || v
-                        }).join(', ')
-                      } else {
-                        displayValue = String(value)
-                      }
-                      break
-                    case 'checkbox':
-                      displayValue = value ? 'Yes' : 'No'
-                      break
-                    default:
-                      displayValue = String(value)
-                  }
-                }
-                
-                fieldValues[field.label] = displayValue
-              })
-          }
-          
-          return { ...baseData, ...fieldValues }
-        })
-      } else {
-        // Basic export with just submission metadata
-        excelData = filteredSubmissions.map(submission => ({
-          'Form Name': getFormName(submission.formTemplateId),
-          'Submitted By': submission.submittedBy,
-          'Submission Date': format(submission.submittedAt, "MMM d, yyyy h:mm a"),
-          'Status': getStatusText(submission.status),
-          'Form ID': submission.formTemplateId,
-          'Submission ID': submission.id
-        }))
+      } catch (error) {
+        console.error("Error preparing export:", error)
+        toast.error("Failed to prepare export")
+        return
       }
-
-      // Create worksheet
-      const worksheet = XLSX.utils.json_to_sheet(excelData)
-
-      // Create workbook
-      const workbook = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Submissions")
-
-      // Generate filename with current date
-      const dateStr = format(new Date(), "yyyy-MM-dd")
-      const fileName = `form-submissions-${dateStr}.xlsx`
-
-      // Trigger download
-      XLSX.writeFile(workbook, fileName)
-      setExportDialogOpen(false)
-      toast.success("Export successful")
-    } catch (error) {
-      console.error("Export error:", error)
-      toast.error("Failed to export data")
-      setExportDialogOpen(false)
     }
+    
+    // Prepare the data rows
+    const data = filteredSubmissions.map(submission => {
+      const row: Record<string, any> = {
+        ID: submission.id,
+        Type: submission.type,
+        Form: submission.formName,
+        'Submitted By': submission.submittedByName,
+        'Submitted At': format(submission.submittedAt, 'MMM d, yyyy h:mm a'),
+        Status: submission.status
+      }
+      
+      // For form submissions with field values
+      if (submission.type === 'form' && submission.formId) {
+        // Add field values if we have the template
+        const template = formTemplatesMap.get(submission.formId)
+        const fieldValues: Record<string, any> = {}
+        
+        // Check if it's a form submission with values
+        if (template?.fields && submission.originalFormSubmission?.values) {
+          template.fields
+            .filter(field => !field.deprecated)
+            .forEach(field => {
+              const value = submission.originalFormSubmission.values[field.id]
+              let displayValue = ''
+              
+              if (value !== undefined && value !== null) {
+                if (Array.isArray(value)) {
+                  displayValue = value.join(', ')
+                } else if (value instanceof Date) {
+                  displayValue = format(value, 'MMM d, yyyy')
+                } else {
+                  displayValue = String(value)
+                }
+              }
+              
+              fieldValues[`Field_${field.label || field.id}`] = displayValue
+            })
+        }
+        
+        // Add field values to the row
+        Object.assign(row, fieldValues)
+      }
+      
+      // For heat JSA records
+      if (submission.type === 'heatCompliance' && submission.originalHeatRecord) {
+        const record = submission.originalHeatRecord
+        
+        row['Temperature'] = record.temperature
+        row['Humidity'] = record.humidity
+        row['Heat Index'] = record.heatIndex
+        row['Location'] = record.location
+        row['Precautions'] = record.precautionsTaken?.join(', ') || ''
+      }
+      
+      return row
+    })
+    
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(data)
+    
+    // Set column widths
+    const colWidths = Object.keys(data[0] || {}).map(k => ({ wch: Math.max(k.length, 15) }))
+    ws['!cols'] = colWidths
+    
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Submissions')
+    
+    // Generate filename with timestamp
+    const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm')
+    const filename = `SafetySimple_Submissions_${timestamp}.xlsx`
+    
+    // Trigger download
+    XLSX.writeFile(wb, filename)
+    
+    toast.success("Export complete!")
+    setExportDialogOpen(false)
   }
   
   if (isLoading) {
@@ -550,6 +694,7 @@ export default function SubmissionsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Forms</SelectItem>
+                <SelectItem value="heat-jsa">Heat JSA</SelectItem>
                 {formsList.map((form) => (
                   <SelectItem key={form.id} value={form.id}>
                     {form.name}
@@ -559,13 +704,14 @@ export default function SubmissionsPage() {
             </Select>
           </div>
           
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SubmissionStatus | "all")} className="mb-4">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as string)} className="mb-4">
             <TabsList className="grid grid-cols-3 md:grid-cols-5">
               <TabsTrigger value="all">All</TabsTrigger>
               <TabsTrigger value="submitted">Submitted</TabsTrigger>
               <TabsTrigger value="inReview">In Review</TabsTrigger>
               <TabsTrigger value="approved">Approved</TabsTrigger>
               <TabsTrigger value="rejected">Rejected</TabsTrigger>
+              <TabsTrigger value="heat-jsa">Heat JSA</TabsTrigger>
             </TabsList>
           </Tabs>
           
@@ -595,9 +741,11 @@ export default function SubmissionsPage() {
                   {filteredSubmissions.map((submission) => (
                     <TableRow key={submission.id}>
                       <TableCell className="font-medium">
-                        {getFormName(submission.formTemplateId)}
+                        {getFormName(submission.formId)}
                       </TableCell>
-                      <TableCell>{submission.submittedBy}</TableCell>
+                      <TableCell>
+                        {submission.submittedByName || submission.submittedBy}
+                      </TableCell>
                       <TableCell>
                         {format(submission.submittedAt, "MMM d, yyyy h:mm a")}
                       </TableCell>
@@ -620,21 +768,21 @@ export default function SubmissionsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem 
-                              onClick={() => updateSubmissionStatus(submission.id, "inReview")}
+                              onClick={() => updateSubmissionStatus(submission, "inReview")}
                               disabled={submission.status === "inReview"}
                             >
                               <RefreshCw className="mr-2 h-4 w-4" />
                               Mark as In Review
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => updateSubmissionStatus(submission.id, "approved")}
+                              onClick={() => updateSubmissionStatus(submission, "approved")}
                               disabled={submission.status === "approved"}
                             >
                               <CheckCircle className="mr-2 h-4 w-4" />
                               Approve
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => updateSubmissionStatus(submission.id, "rejected")}
+                              onClick={() => updateSubmissionStatus(submission, "rejected")}
                               disabled={submission.status === "rejected"}
                               className="text-red-600"
                             >
@@ -652,7 +800,7 @@ export default function SubmissionsPage() {
           )}
         </CardContent>
         <CardFooter className="text-sm text-muted-foreground">
-          Showing {filteredSubmissions.length} of {submissions.length} submissions
+          Showing {filteredSubmissions.length} of {unifiedSubmissions.length} submissions
         </CardFooter>
       </Card>
       
@@ -671,27 +819,73 @@ export default function SubmissionsPage() {
             <div className="space-y-4 my-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-medium">Form: {getFormName(submissionDetails.submission.formTemplateId)}</h3>
-                  <p className="text-sm text-muted-foreground">Status: {getStatusBadge(submissionDetails.submission.status)}</p>
+                  <h3 className="font-medium">Form: {getFormName(submissionDetails.submission.formId)}</h3>
+                  <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                    Status: {getStatusBadge(submissionDetails.submission.status)}
+                  </div>
                 </div>
               </div>
               
               <div className="border rounded-md p-4 bg-muted/50">
                 <h3 className="font-medium mb-4">Submission Values</h3>
                 
-                {submissionDetails.formTemplate ? (
+                {submissionDetails.submission.type === 'heatCompliance' && submissionDetails.submission.originalHeatRecord ? (
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="font-medium text-sm">Job Number</div>
+                      <div className="col-span-2">{submissionDetails.submission.originalHeatRecord.jobNumber}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="font-medium text-sm">Location</div>
+                      <div className="col-span-2">{submissionDetails.submission.originalHeatRecord.location}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="font-medium text-sm">Heat Index</div>
+                      <div className="col-span-2">
+                        {submissionDetails.submission.originalHeatRecord.heatIndex}°F 
+                        ({submissionDetails.submission.originalHeatRecord.riskLevel})
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="font-medium text-sm">Precautions Required</div>
+                      <div className="col-span-2">
+                        <ul className="list-disc pl-5 space-y-1 text-sm">
+                          {submissionDetails.submission.originalHeatRecord.precautionsRequired.map((item: string, idx: number) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="font-medium text-sm">Precautions Taken</div>
+                      <div className="col-span-2">
+                        <ul className="list-disc pl-5 space-y-1 text-sm">
+                          {submissionDetails.submission.originalHeatRecord.precautionsTaken.map((item: string, idx: number) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                    {submissionDetails.submission.originalHeatRecord.additionalNotes && (
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="font-medium text-sm">Additional Notes</div>
+                        <div className="col-span-2">{submissionDetails.submission.originalHeatRecord.additionalNotes}</div>
+                      </div>
+                    )}
+                  </div>
+                ) : submissionDetails.formTemplate ? (
                   <div className="grid gap-4">
                     {submissionDetails.formTemplate.fields
                       ?.filter(field => !field.deprecated)
                       .sort((a, b) => a.order - b.order)
                       .map((field) => {
-                        const fieldValue = submissionDetails.submission.values[field.id]
+                        const fieldValue = submissionDetails.submission.originalFormSubmission?.values?.[field.id]
                         
                         return (
                           <div key={field.id} className="grid grid-cols-3 gap-2">
                             <div className="font-medium text-sm">{field.label}</div>
                             <div className="col-span-2">
-                              {renderFieldValue(field.type, fieldValue, field)}
+                              {renderFormFieldValue(field.type, fieldValue, field)}
                             </div>
                           </div>
                         )
@@ -717,7 +911,7 @@ export default function SubmissionsPage() {
                 {submissionDetails.submission.status !== "approved" && (
                   <Button
                     onClick={() => {
-                      updateSubmissionStatus(submissionDetails.submission.id, "approved")
+                      updateSubmissionStatus(submissionDetails.submission, "approved")
                       setShowDetailsDialog(false)
                     }}
                   >
@@ -730,7 +924,7 @@ export default function SubmissionsPage() {
                   <Button
                     variant="destructive"
                     onClick={() => {
-                      updateSubmissionStatus(submissionDetails.submission.id, "rejected")
+                      updateSubmissionStatus(submissionDetails.submission, "rejected")
                       setShowDetailsDialog(false)
                     }}
                   >
@@ -747,8 +941,8 @@ export default function SubmissionsPage() {
   )
 }
 
-// Helper function to render field value based on type
-function renderFieldValue(type: string, value: any, field: any) {
+// Function to render form field values (for form builder forms)
+function renderFormFieldValue(type: string, value: any, field: any) {
   if (value === undefined || value === null) {
     return <span className="text-muted-foreground italic">Not provided</span>
   }
@@ -782,8 +976,105 @@ function renderFieldValue(type: string, value: any, field: any) {
       const radioOption = field.options?.find((o: any) => o.value === value)
       return <span>{radioOption?.label || value}</span>
     case 'file':
+      if (!value) return <span className="text-muted-foreground italic">No file uploaded</span>
+      
+      // If it's a URL string (saved in database)
+      if (typeof value === 'string') {
+        // Check if it's an image URL
+        const isImageUrl = value.match(/\.(jpeg|jpg|gif|png|webp)$/i) !== null
+        
+        return (
+          <div className="flex flex-col gap-2">
+            {isImageUrl ? (
+              <div className="relative">
+                <a 
+                  href={value} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="group"
+                >
+                  <div className="relative overflow-hidden rounded-md w-32 h-24 border bg-muted flex items-center justify-center">
+                    <img 
+                      src={value} 
+                      alt="Attachment" 
+                      className="object-cover w-full h-full transition-opacity group-hover:opacity-90" 
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      <ExternalLink className="h-6 w-6 text-white" />
+                    </div>
+                  </div>
+                  <span className="text-xs text-muted-foreground mt-1 flex items-center">
+                    <Image className="h-3 w-3 mr-1" />
+                    View Image
+                  </span>
+                </a>
+              </div>
+            ) : (
+              <a 
+                href={value} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <FileText className="h-4 w-4" />
+                Download File
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
+        )
+      }
+      
+      // If it's an object (form temporary state before submission)
+      if (value.file) {
+        return <span>File selected: {value.file.name}</span>
+      }
+      
       return <span>File uploaded</span>
+      
+    case 'employeeList':
+      // For employee list fields, the value is a user ID
+      if (!value) return <span className="text-muted-foreground italic">Not assigned</span>
+      
+      // Try to get employee name from the submission data or fall back to ID
+      let employeeName = "";
+      
+      // If we've preloaded the user display names, use them
+      if (typeof value === 'string' && field.options) {
+        // The field.options might be populated with user data during submission viewing
+        const employeeOption = field.options.find((o: any) => o.value === value)
+        employeeName = employeeOption?.label || value
+      } else {
+        // Otherwise just show the ID with a user icon
+        employeeName = value
+      }
+      
+      return (
+        <div className="flex items-center gap-1.5">
+          <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
+          <span>{employeeName}</span>
+        </div>
+      )
+      
     default:
       return <span>{JSON.stringify(value)}</span>
+  }
+}
+
+// Helper function to get status text (for export)
+function getStatusText(status: string) {
+  switch (status) {
+    case "submitted":
+      return "Submitted"
+    case "inReview":
+      return "In Review"
+    case "approved":
+      return "Approved"
+    case "rejected":
+      return "Rejected"
+    case "draft":
+      return "Draft"
+    default:
+      return status
   }
 } 

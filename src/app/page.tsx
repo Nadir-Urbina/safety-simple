@@ -13,12 +13,10 @@ export default function HomePage() {
   const { user, isLoading } = useAuth()
   const router = useRouter()
   
-  // Redirect authenticated users with organizations to the dashboard
-  useEffect(() => {
-    if (!isLoading && user && user.organizationId) {
-      router.push("/dashboard")
-    }
-  }, [user, isLoading, router])
+  // Removed automatic redirect to allow users to access the home page
+  
+  // Check if user is an admin or analyst
+  const isAdminOrAnalyst = user?.role === "admin" || user?.role === "analyst"
   
   return (
     <MainLayout>
@@ -41,11 +39,11 @@ export default function HomePage() {
                   <Link href="/signup">Create Account</Link>
                 </Button>
               </>
-            ) : (
+            ) : isAdminOrAnalyst ? (
               <Button asChild size="lg">
                 <Link href="/dashboard">Go to Dashboard</Link>
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
         
@@ -92,7 +90,7 @@ export default function HomePage() {
               </p>
               {user ? (
                 <Button asChild className="w-full mt-4" variant="outline">
-                  <Link href="/dashboard/heat-prevention">Heat Prevention</Link>
+                  <Link href="/heat/check-weather">Heat Prevention</Link>
                 </Button>
               ) : (
                 <Button asChild className="w-full mt-4" variant="outline">

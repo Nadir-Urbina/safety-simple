@@ -11,11 +11,13 @@ import {
   setDoc, 
   updateDoc, 
   serverTimestamp,
-  increment 
+  increment,
+  addDoc
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "./auth-context"
-import type { Organization, UserData } from "@/types"
+import { Organization, UserData } from "@/src/types/organization"
+import { processFirestoreData } from "@/lib/firebase-utils"
 
 interface OrganizationContextType {
   organization: Organization | null
@@ -53,21 +55,15 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
           const orgData = orgDoc.data() as Omit<Organization, "id">
           
           // Handle the new subscription-based structure
-          const orgWithDates = {
+          const orgWithDates = processFirestoreData(orgData)
+          
+          // Set the ID which was missing
+          const completeOrg: Organization = {
             id: orgDoc.id,
-            ...orgData,
-            createdAt: orgData.createdAt?.toDate ? orgData.createdAt.toDate() : new Date(),
+            ...orgWithDates
           }
           
-          // Conditionally handle the legacy license structure if it exists
-          if (orgData.license && orgData.license.expiresAt) {
-            orgWithDates.license = {
-              ...orgData.license,
-              expiresAt: orgData.license.expiresAt.toDate()
-            }
-          }
-          
-          setOrganization(orgWithDates)
+          setOrganization(completeOrg)
         } else {
           setOrganization(null)
         }
@@ -130,6 +126,13 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
         role: "admin"
       })
       
+      // Also add the user to the organization's members collection
+      await setDoc(doc(collection(db, "organizations", orgRef.id, "members")), {
+        uid: user.uid,
+        role: "admin",
+        addedAt: serverTimestamp()
+      })
+      
       return orgRef.id
     } catch (error) {
       console.error("Error creating organization:", error)
@@ -146,7 +149,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       await updateDoc(orgRef, { ...orgData })
       
       // Update local state
-      setOrganization(prev => prev ? { ...prev, ...orgData } : null)
+      setOrganization((prev: Organization | null) => prev ? { ...prev, ...orgData } : null)
     } catch (error) {
       console.error("Error updating organization:", error)
       throw error
@@ -169,7 +172,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       await updateDoc(orgRef, updates)
       
       // Update local state
-      setOrganization(prev => 
+      setOrganization((prev: Organization | null) => 
         prev ? { 
           ...prev, 
           settings: { ...prev.settings, ...settings } 
@@ -211,6 +214,13 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
         role
       })
       
+      // Add user to organization members collection
+      await addDoc(collection(db, "organizations", organization.id, "members"), {
+        uid: userId,
+        role,
+        addedAt: serverTimestamp()
+      })
+      
       // Increment seats used in organization
       const orgRef = doc(db, "organizations", organization.id)
       await updateDoc(orgRef, {
@@ -218,7 +228,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       })
       
       // Update local state
-      setOrganization(prev => 
+      setOrganization((prev: Organization | null) => 
         prev ? {
           ...prev,
           license: {
@@ -257,7 +267,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       })
       
       // Update local state
-      setOrganization(prev => 
+      setOrganization((prev: Organization | null) => 
         prev ? {
           ...prev,
           license: {
@@ -283,11 +293,13 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       const users: UserData[] = []
       querySnapshot.forEach(doc => {
         const userData = doc.data() as Omit<UserData, "id">
+        
+        // Process the data to convert timestamps
+        const processedData = processFirestoreData(userData)
+        
         users.push({
           id: doc.id,
-          ...userData,
-          createdAt: userData.createdAt.toDate(),
-          lastLogin: userData.lastLogin.toDate()
+          ...processedData
         })
       })
       

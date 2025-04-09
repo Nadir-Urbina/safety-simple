@@ -18,7 +18,8 @@ import {
   FileText,
   Inbox,
   PlusCircle,
-  FilePlus
+  FilePlus,
+  User
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/contexts/auth-context"
@@ -27,7 +28,8 @@ import { Button } from "@/components/ui/button"
 import { 
   Sheet, 
   SheetContent, 
-  SheetTrigger 
+  SheetTrigger,
+  SheetTitle
 } from "@/components/ui/sheet"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -75,6 +77,18 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       title: "Forms",
       href: "/dashboard/forms",
       icon: <FileText className="h-5 w-5" />,
+      roles: ["admin", "analyst"],
+    },
+    {
+      title: "Template Library",
+      href: "/dashboard/forms/templates",
+      icon: <FilePlus className="h-5 w-5" />,
+      roles: ["admin", "analyst"],
+    },
+    {
+      title: "Incidents",
+      href: "/dashboard/incidents",
+      icon: <AlertTriangle className="h-5 w-5" />,
     },
     {
       title: "Submissions",
@@ -89,9 +103,20 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       roles: ["admin"],
     },
     {
+      title: "Heat Prevention",
+      href: "/heat/check-weather",
+      icon: <Thermometer className="h-5 w-5" />,
+    },
+    {
       title: "Settings",
       href: "/dashboard/settings",
       icon: <Settings className="h-5 w-5" />,
+      roles: ["admin"],
+    },
+    {
+      title: "My Profile",
+      href: "/profile",
+      icon: <User className="h-5 w-5" />,
     },
   ]
 
@@ -138,6 +163,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="flex flex-col p-0">
+            <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
             <div className="p-6">
               <Link
                 href="/"

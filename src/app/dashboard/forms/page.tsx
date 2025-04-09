@@ -12,10 +12,11 @@ import {
   getDocs, 
   doc, 
   updateDoc, 
-  deleteDoc 
+  deleteDoc,
+  orderBy
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { FormTemplate } from "@/types/forms"
+import { FormTemplate } from "@/src/types/forms"
 import { 
   Card, 
   CardContent, 
@@ -67,10 +68,12 @@ import {
   ToggleLeft, 
   ToggleRight,
   FileText,
-  AlertCircle
+  AlertCircle,
+  BookCopy
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { processFirestoreData } from "@/lib/firebase-utils"
 
 export default function FormsManagementPage() {
   const router = useRouter()
@@ -93,26 +96,29 @@ export default function FormsManagementPage() {
       try {
         setIsLoading(true)
         
-        const formsRef = collection(db, "organizations", organization.id, "formTemplates")
-        const formsQuery = query(formsRef)
-        const querySnapshot = await getDocs(formsQuery)
+        const formTemplatesQuery = query(
+          collection(db, "organizations", organization.id, "formTemplates"),
+          orderBy("createdAt", "desc")
+        )
         
-        const formsList: FormTemplate[] = []
-        querySnapshot.forEach((doc) => {
-          const formData = doc.data() as FormTemplate
-          // Convert Firestore timestamps to Date objects
-          formsList.push({
-            ...formData,
-            createdAt: formData.createdAt?.toDate() || new Date(),
-            updatedAt: formData.updatedAt?.toDate() || new Date(),
+        const formTemplatesSnapshot = await getDocs(formTemplatesQuery)
+        const forms: FormTemplate[] = []
+        
+        formTemplatesSnapshot.forEach((doc) => {
+          const formData = doc.data() as Omit<FormTemplate, "id">
+          const processedData = processFirestoreData(formData)
+          
+          forms.push({
+            id: doc.id,
+            ...processedData,
           })
         })
         
         // Sort by updatedAt date (newest first)
-        formsList.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+        forms.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
         
-        setForms(formsList)
-        setFilteredForms(formsList)
+        setForms(forms)
+        setFilteredForms(forms)
       } catch (error) {
         console.error("Error loading forms:", error)
         toast.error("Failed to load forms")
@@ -149,6 +155,8 @@ export default function FormsManagementPage() {
       setFilteredForms(forms.filter(form => form.isActive))
     } else if (activeTab === "inactive") {
       setFilteredForms(forms.filter(form => !form.isActive))
+    } else if (activeTab === "templates") {
+      setFilteredForms(forms.filter(form => form.copiedFromTemplateId))
     } else if (activeTab === "incident") {
       setFilteredForms(forms.filter(form => form.category === "incident"))
     } else if (activeTab === "recognition") {
@@ -280,11 +288,14 @@ export default function FormsManagementPage() {
             </div>
             
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-auto">
-              <TabsList>
+              <TabsList className="grid grid-cols-2 md:grid-cols-8">
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="active">Active</TabsTrigger>
                 <TabsTrigger value="inactive">Inactive</TabsTrigger>
-                <TabsTrigger value="incident">Incidents</TabsTrigger>
+                <TabsTrigger value="templates">From Templates</TabsTrigger>
+                <TabsTrigger value="incident">Incident</TabsTrigger>
+                <TabsTrigger value="recognition">Recognition</TabsTrigger>
+                <TabsTrigger value="heatPrevention">Heat Prevention</TabsTrigger>
                 <TabsTrigger value="other">Other</TabsTrigger>
               </TabsList>
             </Tabs>
@@ -331,14 +342,20 @@ export default function FormsManagementPage() {
                           <TableCell className="font-medium">
                             <div className="flex items-center">
                               <File className="mr-2 h-4 w-4 text-muted-foreground" />
-                              <div>
-                                <div>{form.name}</div>
+                              <div className="flex flex-col">
+                                <span>{form.name}</span>
                                 {form.description && (
                                   <div className="text-xs text-muted-foreground">
                                     {form.description.length > 50
                                       ? `${form.description.substring(0, 50)}...`
                                       : form.description}
                                   </div>
+                                )}
+                                {form.copiedFromTemplateId && (
+                                  <Badge variant="outline" className="text-xs mt-1 w-fit bg-blue-50 text-blue-700 border-blue-200">
+                                    <BookCopy className="h-3 w-3 mr-1" />
+                                    Template-based
+                                  </Badge>
                                 )}
                               </div>
                             </div>

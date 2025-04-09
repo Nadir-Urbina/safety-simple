@@ -51,7 +51,8 @@ export function FieldEditor({ field, isNew, onUpdate, onDelete, onDuplicate }: F
     { value: "multiselect", label: "Multi-Select" },
     { value: "checkbox", label: "Checkbox" },
     { value: "radio", label: "Radio Buttons" },
-    { value: "file", label: "File Upload" }
+    { value: "file", label: "File Upload" },
+    { value: "employeeList", label: "Employee Select" }
   ]
 
   // Get display label for field type
@@ -256,22 +257,25 @@ export function FieldEditor({ field, isNew, onUpdate, onDelete, onDuplicate }: F
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              <div className="space-y-2">
-                <p>Deleting an existing field may impact:</p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Historical data associated with this field</li>
-                  <li>Reports and analytics that use this field</li>
-                  <li>Automations or workflows that depend on this field</li>
-                </ul>
-                <div className="flex items-center gap-2 mt-4 p-2 bg-amber-50 border border-amber-200 rounded">
-                  <AlertTriangle className="h-5 w-5 text-amber-500" />
-                  <p className="text-sm text-amber-700">
-                    Consider deprecating this field instead of deleting it to preserve data integrity.
-                  </p>
-                </div>
-              </div>
+              Deleting an existing field may impact your form data
             </AlertDialogDescription>
           </AlertDialogHeader>
+          
+          <div className="my-4 space-y-2">
+            <p>Deleting an existing field may impact:</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Historical data associated with this field</li>
+              <li>Reports and analytics that use this field</li>
+              <li>Automations or workflows that depend on this field</li>
+            </ul>
+            <div className="flex items-center gap-2 mt-4 p-2 bg-amber-50 border border-amber-200 rounded">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <p className="text-sm text-amber-700">
+                Consider deprecating this field instead of deleting it to preserve data integrity.
+              </p>
+            </div>
+          </div>
+          
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction 

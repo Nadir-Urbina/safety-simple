@@ -1,174 +1,279 @@
 "use client"
 
-import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { useAuth } from "@/contexts/auth-context"
 import { MainLayout } from "@/components/layout/main-layout"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Separator } from "@/components/ui/separator"
-import { useToast } from "@/components/ui/use-toast"
-import { useAuth } from "@/contexts/auth-context"
-import { doc, updateDoc } from "firebase/firestore"
-import { db } from "@/lib/firebase"
-import { Loader2, User, Mail, Briefcase, Building } from "lucide-react"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { User, Mail, Phone, AlertTriangle } from "lucide-react"
+import { updateEmail, updatePassword, updateProfile } from "firebase/auth"
+import { doc, updateDoc, getDoc } from "firebase/firestore"
+import { db, auth } from "@/lib/firebase"
+import { toast } from "sonner"
 
 export default function ProfilePage() {
-  const { user } = useAuth()
-  const { toast } = useToast()
-  const [isEditing, setIsEditing] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    displayName: user?.displayName || "",
-    jobTitle: user?.jobTitle || "",
-    department: user?.department || "",
-  })
+  const { user, loading } = useAuth()
+  const router = useRouter()
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
+  const [firstName, setFirstName] = useState("")
+  const [lastName, setLastName] = useState("")
+  const [email, setEmail] = useState("")
+  const [phone, setPhone] = useState("")
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [isUpdating, setIsUpdating] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login")
+      return
+    }
+
+    if (user) {
+      setEmail(user.email || "")
+      
+      // Fetch additional user data from Firestore
+      const fetchUserData = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid))
+          if (userDoc.exists()) {
+            const userData = userDoc.data()
+            setFirstName(userData.firstName || "")
+            setLastName(userData.lastName || "")
+            setPhone(userData.phone || "")
+          }
+        } catch (error) {
+          console.error("Error fetching user data:", error)
+          toast.error("Could not load your profile information")
+        }
+      }
+      
+      fetchUserData()
+    }
+  }, [user, loading, router])
+
+  const updateUserProfile = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    if (!user) return
-
-    setIsLoading(true)
+    setError(null)
+    setIsUpdating(true)
 
     try {
-      // Update user document in Firestore
-      const userDocRef = doc(db, "users", user.id)
-      await updateDoc(userDocRef, {
-        displayName: formData.displayName,
-        jobTitle: formData.jobTitle,
-        department: formData.department,
-      })
+      if (!user) throw new Error("Not authenticated")
+      
+      // Get current Firebase auth user
+      const currentUser = auth.currentUser
+      if (!currentUser) throw new Error("Firebase auth user not found")
 
-      toast({
-        title: "Profile updated",
-        description: "Your profile information has been updated successfully.",
+      // Update Firestore document
+      await updateDoc(doc(db, "users", user.uid), {
+        firstName,
+        lastName,
+        phone,
+        updatedAt: new Date()
       })
-
-      setIsEditing(false)
+      
+      // Update display name in Authentication using the raw Firebase auth user
+      await updateProfile(currentUser, {
+        displayName: `${firstName} ${lastName}`
+      })
+      
+      toast.success("Profile updated successfully")
     } catch (error) {
       console.error("Error updating profile:", error)
-      toast({
-        title: "Error updating profile",
-        description: "There was a problem updating your profile. Please try again.",
-        variant: "destructive",
-      })
+      setError("Failed to update profile. Please try again.")
+      toast.error("Failed to update profile")
     } finally {
-      setIsLoading(false)
+      setIsUpdating(false)
     }
+  }
+
+  const changePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    
+    if (newPassword !== confirmPassword) {
+      setError("New passwords do not match")
+      return
+    }
+    
+    if (newPassword.length < 8) {
+      setError("Password must be at least 8 characters long")
+      return
+    }
+    
+    setIsUpdating(true)
+    
+    try {
+      if (!user) throw new Error("Not authenticated")
+      
+      // Get current Firebase auth user
+      const currentUser = auth.currentUser
+      if (!currentUser) throw new Error("Firebase auth user not found")
+      
+      await updatePassword(currentUser, newPassword)
+      
+      setNewPassword("")
+      setConfirmPassword("")
+      setCurrentPassword("")
+      toast.success("Password changed successfully")
+    } catch (error: any) {
+      console.error("Error changing password:", error)
+      setError(error.message || "Failed to change password. You may need to re-login before changing your password.")
+      toast.error("Failed to change password")
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <MainLayout>
+        <div className="container py-10">
+          <p>Loading...</p>
+        </div>
+      </MainLayout>
+    )
   }
 
   return (
     <MainLayout>
-      <div className="container mx-auto max-w-3xl p-4 pb-20 md:p-8 md:pb-8">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">My Profile</CardTitle>
-            <CardDescription>View and manage your account information</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex flex-col items-center justify-center space-y-3">
-              <Avatar className="h-24 w-24">
-                <AvatarImage src={user?.photoURL || ""} alt={user?.displayName || "User"} />
-                <AvatarFallback className="text-2xl">{user?.displayName?.charAt(0) || "U"}</AvatarFallback>
-              </Avatar>
-              <h2 className="text-xl font-semibold">{user?.displayName}</h2>
-              <div className="flex items-center text-sm text-muted-foreground">
-                <Mail className="mr-1 h-4 w-4" />
-                {user?.email}
-              </div>
-            </div>
-
-            <Separator />
-
-            {isEditing ? (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="displayName">Full Name</Label>
+      <div className="container py-10 space-y-8">
+        <h1 className="text-3xl font-bold">My Profile</h1>
+        
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
+        <div className="grid md:grid-cols-2 gap-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Personal Information</CardTitle>
+              <CardDescription>Update your personal details</CardDescription>
+            </CardHeader>
+            <form onSubmit={updateUserProfile}>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="firstName" className="text-sm font-medium">First Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="firstName"
+                      placeholder="First Name"
+                      className="pl-10"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <label htmlFor="lastName" className="text-sm font-medium">Last Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="lastName"
+                      placeholder="Last Name"
+                      className="pl-10"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <label htmlFor="email" className="text-sm font-medium">Email Address</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="Email"
+                      className="pl-10"
+                      value={email}
+                      disabled
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Contact your administrator to change your email address</p>
+                </div>
+                
+                <div className="space-y-2">
+                  <label htmlFor="phone" className="text-sm font-medium">Phone Number</label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="phone"
+                      placeholder="Phone Number"
+                      className="pl-10"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter>
+                <Button type="submit" disabled={isUpdating}>
+                  {isUpdating ? "Updating..." : "Update Profile"}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Change Password</CardTitle>
+              <CardDescription>Update your password for security</CardDescription>
+            </CardHeader>
+            <form onSubmit={changePassword}>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="currentPassword" className="text-sm font-medium">Current Password</label>
                   <Input
-                    id="displayName"
-                    name="displayName"
-                    value={formData.displayName}
-                    onChange={handleChange}
-                    required
+                    id="currentPassword"
+                    type="password"
+                    placeholder="Current Password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
                   />
                 </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="jobTitle">Job Title</Label>
-                  <Input id="jobTitle" name="jobTitle" value={formData.jobTitle} onChange={handleChange} />
+                
+                <div className="space-y-2">
+                  <label htmlFor="newPassword" className="text-sm font-medium">New Password</label>
+                  <Input
+                    id="newPassword"
+                    type="password"
+                    placeholder="New Password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
                 </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="department">Department</Label>
-                  <Input id="department" name="department" value={formData.department} onChange={handleChange} />
+                
+                <div className="space-y-2">
+                  <label htmlFor="confirmPassword" className="text-sm font-medium">Confirm New Password</label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    placeholder="Confirm New Password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
                 </div>
-
-                <div className="flex justify-end space-x-2">
-                  <Button type="button" variant="outline" onClick={() => setIsEditing(false)} disabled={isLoading}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      "Save Changes"
-                    )}
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid gap-1">
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <User className="mr-2 h-4 w-4" />
-                    Full Name
-                  </div>
-                  <div className="font-medium">{user?.displayName || "Not set"}</div>
-                </div>
-
-                <div className="grid gap-1">
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <Briefcase className="mr-2 h-4 w-4" />
-                    Job Title
-                  </div>
-                  <div className="font-medium">{user?.jobTitle || "Not set"}</div>
-                </div>
-
-                <div className="grid gap-1">
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <Building className="mr-2 h-4 w-4" />
-                    Department
-                  </div>
-                  <div className="font-medium">{user?.department || "Not set"}</div>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button onClick={() => setIsEditing(true)}>Edit Profile</Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-          <CardFooter className="flex flex-col items-start border-t px-6 py-4">
-            <h3 className="text-lg font-medium">Account Information</h3>
-            <div className="mt-2 text-sm text-muted-foreground">
-              <p>Account created: {user?.createdAt.toLocaleDateString()}</p>
-              <p>Last login: {user?.lastLogin.toLocaleDateString()}</p>
-              <p>Role: {user?.role}</p>
-            </div>
-          </CardFooter>
-        </Card>
+              </CardContent>
+              <CardFooter>
+                <Button type="submit" disabled={isUpdating || !newPassword || !confirmPassword}>
+                  {isUpdating ? "Changing..." : "Change Password"}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
+        </div>
       </div>
     </MainLayout>
   )

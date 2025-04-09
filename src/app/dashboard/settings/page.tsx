@@ -7,6 +7,7 @@ import { OrganizationSettings } from "./components/organization-settings";
 import { NotificationSettings } from "./components/notification-settings";
 import { ComplianceSettings } from "./components/compliance-settings";
 import { DataManagement } from "./components/data-management";
+import { HeatPreventionSettings } from "./components/heat-prevention-settings";
 import {
   LayoutGrid,
   Bell,
@@ -14,6 +15,7 @@ import {
   Database,
   Users,
   Settings2,
+  Thermometer,
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -58,6 +60,13 @@ export default function SettingsPage() {
               <span>Compliance</span>
             </TabsTrigger>
             <TabsTrigger
+              value="heat-prevention"
+              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2"
+            >
+              <Thermometer className="h-4 w-4" />
+              <span>Heat Prevention</span>
+            </TabsTrigger>
+            <TabsTrigger
               value="data"
               className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-2"
             >
@@ -96,6 +105,12 @@ export default function SettingsPage() {
         <TabsContent value="compliance" className="space-y-4">
           <Card className="p-6">
             <ComplianceSettings />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="heat-prevention" className="space-y-4">
+          <Card className="p-6">
+            <HeatPreventionSettings />
           </Card>
         </TabsContent>
 

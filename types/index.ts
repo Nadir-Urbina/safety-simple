@@ -24,6 +24,7 @@ export interface Organization {
 // User types
 export interface UserData {
   id: string
+  uid?: string  // Added for backward compatibility with Firebase Auth
   displayName: string
   email: string
   photoURL?: string

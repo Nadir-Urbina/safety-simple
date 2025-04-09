@@ -12,6 +12,7 @@ import {
 import { sendEmail } from './email-service';
 import * as EmailTemplates from './email-templates';
 import { NotificationSettings, Organization, UserData } from '@/types';
+import { toDate, processFirestoreData } from '@/lib/firebase-utils';
 
 // Check if notification is enabled for a specific user
 async function isNotificationEnabled(
@@ -64,8 +65,8 @@ async function getOrganizationAdmins(organizationId: string): Promise<UserData[]
       admins.push({
         id: doc.id,
         ...userData,
-        createdAt: userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date(),
-        lastLogin: userData.lastLogin?.toDate ? userData.lastLogin.toDate() : new Date()
+        createdAt: toDate(userData.createdAt) || new Date(),
+        lastLogin: toDate(userData.lastLogin) || new Date()
       });
     });
     
@@ -88,14 +89,14 @@ async function getOrganization(organizationId: string): Promise<Organization | n
       const orgWithDates = {
         id: orgDoc.id,
         ...orgData,
-        createdAt: orgData.createdAt?.toDate ? orgData.createdAt.toDate() : new Date(),
+        createdAt: toDate(orgData.createdAt) || new Date(),
       };
       
       // Handle license expiration date if it exists
       if (orgData.license && orgData.license.expiresAt) {
         orgWithDates.license = {
           ...orgData.license,
-          expiresAt: orgData.license.expiresAt.toDate()
+          expiresAt: toDate(orgData.license.expiresAt) || new Date()
         };
       }
       
@@ -251,8 +252,8 @@ export async function notifyFormSubmission(
         usersToNotify = [{
           id: userDoc.id,
           ...userData,
-          createdAt: userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date(),
-          lastLogin: userData.lastLogin?.toDate ? userData.lastLogin.toDate() : new Date()
+          createdAt: toDate(userData.createdAt) || new Date(),
+          lastLogin: toDate(userData.lastLogin) || new Date()
         }];
       }
     } else {
@@ -351,8 +352,8 @@ export async function notifySubmissionApproval(
         usersToNotify.push({
           id: userDoc.id,
           ...userData,
-          createdAt: userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date(),
-          lastLogin: userData.lastLogin?.toDate ? userData.lastLogin.toDate() : new Date()
+          createdAt: toDate(userData.createdAt) || new Date(),
+          lastLogin: toDate(userData.lastLogin) || new Date()
         });
       }
     }
@@ -453,8 +454,8 @@ export async function notifySystemUpdate(
       users.push({
         id: doc.id,
         ...userData,
-        createdAt: userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date(),
-        lastLogin: userData.lastLogin?.toDate ? userData.lastLogin.toDate() : new Date()
+        createdAt: toDate(userData.createdAt) || new Date(),
+        lastLogin: toDate(userData.lastLogin) || new Date()
       });
     });
     
@@ -547,8 +548,8 @@ export async function sendDailyDigest(organizationId: string, date = new Date())
       users.push({
         id: doc.id,
         ...userData,
-        createdAt: userData.createdAt?.toDate ? userData.createdAt.toDate() : new Date(),
-        lastLogin: userData.lastLogin?.toDate ? userData.lastLogin.toDate() : new Date()
+        createdAt: toDate(userData.createdAt) || new Date(),
+        lastLogin: toDate(userData.lastLogin) || new Date()
       });
     });
     
@@ -689,5 +690,92 @@ async function getDayActivities(organizationId: string, date: Date) {
   } catch (error) {
     console.error('Error getting day activities:', error);
     return [];
+  }
+}
+
+// Template data for form submission notification
+export async function sendFormSubmissionNotification(
+  data: {
+    formId: string;
+    formName: string;
+    submissionId: string;
+    organizationId: string;
+    submitterId: string;
+    receiverIds: string[];
+    createdAt: any;
+  }
+): Promise<boolean> {
+  try {
+    // Check if this notification type is enabled
+    const isEnabled = await areNotificationsEnabledForAny(
+      data.receiverIds,
+      data.organizationId,
+      'formSubmission'
+    );
+
+    if (!isEnabled) {
+      console.log('Form submission notifications disabled for organization or all users');
+      return false;
+    }
+
+    // Get organization info for email template
+    const organization = await getOrganization(data.organizationId);
+    if (!organization) {
+      console.error('Organization not found');
+      return false;
+    }
+
+    // Get sender info
+    const submitterData = await getUserData(data.submitterId);
+    const senderName = submitterData?.displayName || submitterData?.email || 'A team member';
+
+    // Generate view link
+    const viewLink = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/forms/submissions?id=${data.submissionId}`;
+
+    // Get receiver email addresses
+    const emailPromises = [];
+    for (const receiverId of data.receiverIds) {
+      // Check individual notification preference
+      const userEnabled = await isNotificationEnabled(receiverId, data.organizationId, 'formSubmission');
+      if (!userEnabled) continue;
+
+      const receiverData = await getUserData(receiverId);
+      if (!receiverData || !receiverData.email) continue;
+
+      // Send email notification
+      emailPromises.push(
+        sendEmail({
+          to: receiverData.email,
+          subject: `New Form Submission: ${data.formName}`,
+          html: EmailTemplates.formSubmission({
+            recipientName: receiverData.displayName || receiverData.email,
+            submitterName: senderName,
+            formName: data.formName,
+            time: toDate(data.createdAt) || new Date(),
+            viewLink,
+            organizationName: organization.name,
+            logoUrl: organization.branding?.logoUrl,
+          }),
+        })
+      );
+
+      // Log notification
+      await logNotification({
+        type: 'formSubmission',
+        userId: receiverId,
+        organizationId: data.organizationId,
+        referenceId: data.submissionId,
+        title: `New form submission: ${data.formName}`,
+        body: `${senderName} submitted a new form`,
+        link: viewLink,
+      });
+    }
+
+    // Wait for all emails to be sent
+    await Promise.all(emailPromises);
+    return true;
+  } catch (error) {
+    console.error('Error sending form submission notification:', error);
+    return false;
   }
 } 
