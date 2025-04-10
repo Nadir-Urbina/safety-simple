@@ -110,23 +110,36 @@ async function getOrganization(organizationId: string): Promise<Organization | n
   }
 }
 
-// Log notification to database for tracking
-async function logNotification(
-  organizationId: string,
-  userId: string,
-  notificationType: string,
-  sentVia: 'email' | 'sms' | 'app',
-  success: boolean,
-  metadata: Record<string, any>
-) {
+// Enhanced version of logNotification with a unified parameter object
+async function logNotification({
+  type,
+  userId,
+  organizationId,
+  referenceId,
+  title,
+  body,
+  link,
+}: {
+  type: string;
+  userId: string;
+  organizationId: string;
+  referenceId?: string;
+  title: string;
+  body: string;
+  link?: string;
+}) {
   try {
     await addDoc(collection(db, 'organizations', organizationId, 'notifications'), {
       userId,
-      notificationType,
-      sentVia,
-      success,
-      metadata,
-      createdAt: serverTimestamp()
+      type,
+      sentVia: 'email',
+      success: true,
+      referenceId,
+      title,
+      body,
+      link,
+      createdAt: new Date(),
+      read: false
     });
   } catch (error) {
     console.error('Error logging notification:', error);
@@ -193,14 +206,14 @@ export async function notifyCriticalIncident(
       
       // Log the notification
       await logNotification(
-        organizationId,
-        admin.id,
-        'criticalIncident',
-        'email',
-        result.success,
         {
-          incidentId: incidentData.incidentId,
-          subject
+          type: 'criticalIncident',
+          userId: admin.id,
+          organizationId,
+          referenceId: incidentData.incidentId,
+          title: incidentData.title,
+          body: incidentData.description,
+          link: dashboardUrl
         }
       );
       
@@ -293,14 +306,14 @@ export async function notifyFormSubmission(
       
       // Log the notification
       await logNotification(
-        organizationId,
-        user.id,
-        'formSubmission',
-        'email',
-        result.success,
         {
-          formId: formData.formId,
-          subject
+          type: 'formSubmission',
+          userId: user.id,
+          organizationId,
+          referenceId: formData.formId,
+          title: `New form submission: ${formData.formType}`,
+          body: `${formData.submittedBy} submitted a new form`,
+          link: dashboardUrl
         }
       );
       
@@ -391,15 +404,14 @@ export async function notifySubmissionApproval(
       
       // Log the notification
       await logNotification(
-        organizationId,
-        user.id,
-        'submissionApproval',
-        'email',
-        result.success,
         {
-          formId: formData.formId,
-          status: formData.status,
-          subject
+          type: 'submissionApproval',
+          userId: user.id,
+          organizationId,
+          referenceId: formData.formId,
+          title: `Submission approval: ${formData.formType}`,
+          body: `${formData.submittedBy} submitted a ${formData.status} form`,
+          link: dashboardUrl
         }
       );
       
@@ -491,14 +503,12 @@ export async function notifySystemUpdate(
       
       // Log the notification
       await logNotification(
-        organizationId,
-        user.id,
-        'systemUpdate',
-        'email',
-        result.success,
         {
-          updateTitle: updateData.updateTitle,
-          subject
+          type: 'systemUpdate',
+          userId: user.id,
+          organizationId,
+          title: updateData.updateTitle,
+          body: updateData.updateDescription
         }
       );
       
@@ -583,15 +593,13 @@ export async function sendDailyDigest(organizationId: string, date = new Date())
       
       // Log the notification
       await logNotification(
-        organizationId,
-        user.id,
-        'dailyDigest',
-        'email',
-        result.success,
         {
-          date: date.toISOString(),
-          activitiesCount: activities.length,
-          subject
+          type: 'dailyDigest',
+          userId: user.id,
+          organizationId,
+          title: 'Daily Digest',
+          body: `You have ${activities.length} activities today`,
+          link: dashboardUrl
         }
       );
       
@@ -693,6 +701,70 @@ async function getDayActivities(organizationId: string, date: Date) {
   }
 }
 
+// Get user data from Firestore
+async function getUserData(userId: string): Promise<UserData | null> {
+  try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (!userDoc.exists()) return null;
+    
+    const userData = userDoc.data() as Omit<UserData, 'id'>;
+    
+    return {
+      id: userDoc.id,
+      ...userData,
+      createdAt: toDate(userData.createdAt) || new Date(),
+      lastLogin: toDate(userData.lastLogin) || new Date(),
+    };
+  } catch (error) {
+    console.error('Error getting user data:', error);
+    return null;
+  }
+}
+
+// Check if notifications are enabled for any of the specified users
+async function areNotificationsEnabledForAny(
+  userIds: string[],
+  organizationId: string,
+  notificationType: keyof NotificationSettings['email']
+): Promise<boolean> {
+  // If no users specified, return false
+  if (!userIds.length) return false;
+  
+  try {
+    // First check org-level settings
+    const settingsDoc = await getDoc(doc(db, 'organizations', organizationId, 'settings', 'notifications'));
+    if (!settingsDoc.exists()) return true; // Default to true if settings don't exist
+    
+    const notificationSettings = settingsDoc.data() as NotificationSettings;
+    
+    // If email notifications are disabled globally, return false immediately
+    if (!notificationSettings.email.enabled) return false;
+    
+    // If the specific notification type is disabled at org level, return false
+    if (!notificationSettings.email[notificationType]) return false;
+    
+    // Check if at least one user has notifications enabled
+    for (const userId of userIds) {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (!userDoc.exists()) continue;
+      
+      const userData = userDoc.data() as UserData;
+      
+      // Check if user has disabled all notifications
+      if (userData.notifications?.disableAll) continue;
+      
+      // If we find at least one user with notifications enabled, return true
+      return true;
+    }
+    
+    // If we get here, no users have notifications enabled
+    return false;
+  } catch (error) {
+    console.error('Error checking notification preferences:', error);
+    return false;
+  }
+}
+
 // Template data for form submission notification
 export async function sendFormSubmissionNotification(
   data: {
@@ -747,28 +819,30 @@ export async function sendFormSubmissionNotification(
         sendEmail({
           to: receiverData.email,
           subject: `New Form Submission: ${data.formName}`,
-          html: EmailTemplates.formSubmission({
-            recipientName: receiverData.displayName || receiverData.email,
-            submitterName: senderName,
-            formName: data.formName,
-            time: toDate(data.createdAt) || new Date(),
-            viewLink,
-            organizationName: organization.name,
-            logoUrl: organization.branding?.logoUrl,
+          html: EmailTemplates.formSubmissionTemplate({
+            formType: data.formName,
+            submittedBy: senderName,
+            submittedAt: toDate(data.createdAt) || new Date(),
+            formId: data.formId,
+            dashboardUrl: viewLink,
+            userName: receiverData.displayName || receiverData.email,
+            organization,
           }),
         })
       );
 
       // Log notification
-      await logNotification({
-        type: 'formSubmission',
-        userId: receiverId,
-        organizationId: data.organizationId,
-        referenceId: data.submissionId,
-        title: `New form submission: ${data.formName}`,
-        body: `${senderName} submitted a new form`,
-        link: viewLink,
-      });
+      await logNotification(
+        {
+          type: 'formSubmission',
+          userId: receiverId,
+          organizationId: data.organizationId,
+          referenceId: data.submissionId,
+          title: `New form submission: ${data.formName}`,
+          body: `${senderName} submitted a new form`,
+          link: viewLink
+        }
+      );
     }
 
     // Wait for all emails to be sent
