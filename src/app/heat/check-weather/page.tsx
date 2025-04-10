@@ -15,6 +15,7 @@ import { useWeather } from "../../../../contexts/weather-context"
 import { useOrganization } from "@/contexts/organization-context"
 import { HeatThreshold } from "@/src/types"
 import { useRouter } from "next/navigation"
+import { ResponsiveContainer } from "@/components/layout/responsive-container"
 
 export default function CheckWeatherPage() {
   const { toast } = useToast()
@@ -172,184 +173,224 @@ export default function CheckWeatherPage() {
 
   return (
     <MainLayout>
-      <div className="pb-16">
-        {/* Header */}
-        <div className="bg-blue-800 text-white py-4">
-          <div className="flex items-center justify-center">
-            <Thermometer className="mr-2 h-5 w-5" />
-            <h1 className="text-xl font-bold">Heat Index Check</h1>
-          </div>
-        </div>
-        
-        <div className="px-4 py-4 space-y-4">
-          {!organization?.id && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Not Connected</AlertTitle>
-              <AlertDescription>
-                You must be logged in and connected to an organization to use this feature.
-              </AlertDescription>
-            </Alert>
-          )}
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-6">
+        <ResponsiveContainer className="text-center">
+          <Thermometer className="h-8 w-8 mb-4 inline-block" />
+          <h1 className="text-2xl md:text-3xl font-bold">Heat Index Check</h1>
+          <p className="mt-2 text-blue-100 max-w-lg mx-auto">
+            Check weather conditions and heat index to take appropriate precautions
+          </p>
+        </ResponsiveContainer>
+      </div>
+      
+      <ResponsiveContainer className="space-y-6">
+        {!organization?.id && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Not Connected</AlertTitle>
+            <AlertDescription>
+              You must be logged in and connected to an organization to use this feature.
+            </AlertDescription>
+          </Alert>
+        )}
 
-          {error && error.includes("API key") && error.includes("Settings") && (
-            <Alert variant="warning">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>API Key Required</AlertTitle>
-              <AlertDescription>
-                Please add an OpenWeatherMap API key in Settings &gt; Heat Prevention to use this feature.
-              </AlertDescription>
-            </Alert>
-          )}
+        {error && error.includes("API key") && error.includes("Settings") && (
+          <Alert variant="warning">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>API Key Required</AlertTitle>
+            <AlertDescription>
+              Please add an OpenWeatherMap API key in Settings &gt; Heat Prevention to use this feature.
+            </AlertDescription>
+          </Alert>
+        )}
 
-          {/* Get Current Location Button */}
-          <Button
-            onClick={handleGetCurrentLocation}
-            className="w-full py-2 bg-cyan-600 hover:bg-cyan-700 text-sm"
-            disabled={loading || !organization?.id}
-          >
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MapPin className="mr-2 h-4 w-4" />}
-            Get Weather for Current Location
-          </Button>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Location Selection</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Get Current Location Button */}
+            <Button
+              onClick={handleGetCurrentLocation}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700"
+              disabled={loading || !organization?.id}
+            >
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MapPin className="mr-2 h-4 w-4" />}
+              Get Weather for Current Location
+            </Button>
 
-          {/* Manual Location Entry */}
-          <div>
-            <p className="text-center font-medium mb-2">Or, Enter the Location Manually:</p>
-            <form onSubmit={handleManualSearch} className="flex gap-2">
-              <Input
-                type="text"
-                placeholder="Enter city, city+state (Miami, FL), or ZIP code (32003)"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="flex-1 text-sm h-10"
-                disabled={loading || !organization?.id}
-              />
-              <Button type="submit" size="icon" className="h-10 w-10" disabled={loading || !organization?.id}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              </Button>
-            </form>
-          </div>
+            {/* Manual Location Entry */}
+            <div>
+              <p className="text-center text-sm text-muted-foreground mb-2">Or, Enter the Location Manually:</p>
+              <form onSubmit={handleManualSearch} className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="City, State or ZIP code"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="flex-1"
+                  disabled={loading || !organization?.id}
+                />
+                <Button type="submit" className="flex-shrink-0" disabled={loading || !organization?.id}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                  <span className="hidden sm:inline">Search</span>
+                </Button>
+              </form>
+            </div>
+          </CardContent>
+        </Card>
 
-          {error && !error.includes("API key") && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+        {error && !error.includes("API key") && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-          {/* Weather Data Display */}
-          {weatherData && (
-            <div className="space-y-4">
-              {/* Current Weather */}
-              <div className="bg-blue-50 rounded-md p-3">
-                <h2 className="text-center text-blue-800 font-semibold mb-3">
-                  Current Weather Conditions
-                </h2>
-                
-                <div className="grid grid-cols-2 gap-y-2 text-sm">
-                  <div className="text-right pr-3 font-medium">Temperature:</div>
-                  <div>{weatherData.temperature}°F</div>
-                  
-                  <div className="text-right pr-3 font-medium">Humidity:</div>
-                  <div>{weatherData.humidity}%</div>
-                  
-                  <div className="text-right pr-3 font-medium">Current Heat Index:</div>
-                  <div className="font-medium" style={{ 
-                    color: getContrastColor(getHeatIndexCategory(weatherData.heatIndex).color) 
-                  }}>
-                    {weatherData.heatIndex}°F
-                    <span className="block">
-                      ({getHeatIndexCategory(weatherData.heatIndex).name})
-                    </span>
+        {/* Weather Data Display */}
+        {weatherData && (
+          <div className="space-y-6">
+            {/* Current Weather */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex justify-between items-center">
+                  <span>Current Weather in {weatherData.location}</span>
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {new Date(weatherData.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="flex flex-col items-center p-3 bg-blue-50 rounded-lg">
+                    <Thermometer className="h-6 w-6 text-red-500 mb-1" />
+                    <span className="text-xs text-muted-foreground">Temperature</span>
+                    <span className="text-xl font-semibold">{Math.round(weatherData.temperature)}°F</span>
                   </div>
                   
-                  <div className="text-right pr-3 font-medium">Predicted Max:</div>
-                  <div className="font-medium" style={{ 
-                    color: getContrastColor(getHeatIndexCategory(getMaxHeatIndexForToday()).color) 
-                  }}>
-                    {getMaxHeatIndexForToday()}°F
-                    <span className="block">
-                      ({getHeatIndexCategory(getMaxHeatIndexForToday()).name})
-                    </span>
+                  <div className="flex flex-col items-center p-3 bg-blue-50 rounded-lg">
+                    <Thermometer className="h-6 w-6 text-orange-500 mb-1" />
+                    <span className="text-xs text-muted-foreground">Heat Index</span>
+                    <span className="text-xl font-semibold">{Math.round(weatherData.heatIndex)}°F</span>
                   </div>
                   
-                  <div className="text-right pr-3 font-medium">Conditions:</div>
-                  <div>{weatherData.conditions}</div>
+                  <div className="flex flex-col items-center p-3 bg-blue-50 rounded-lg">
+                    <Droplets className="h-6 w-6 text-blue-500 mb-1" />
+                    <span className="text-xs text-muted-foreground">Humidity</span>
+                    <span className="text-xl font-semibold">{Math.round(weatherData.humidity)}%</span>
+                  </div>
                   
-                  <div className="text-right pr-3 font-medium">Location:</div>
-                  <div className="break-words">{weatherData.location}</div>
+                  <div className="flex flex-col items-center p-3 bg-blue-50 rounded-lg">
+                    <Wind className="h-6 w-6 text-sky-500 mb-1" />
+                    <span className="text-xs text-muted-foreground">Wind Speed</span>
+                    <span className="text-xl font-semibold">{Math.round((weatherData as any).windSpeed || 0)} mph</span>
+                  </div>
                 </div>
-              </div>
-
-              {/* Precautions Section */}
-              {thresholdsLoading ? (
-                <div className="flex justify-center py-4">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
-              ) : (
-                <>
-                  <div className="rounded-md border p-3" style={{ 
-                    borderColor: getContrastColor(getHeatIndexCategory(getHighestHeatIndex()).color),
-                    backgroundColor: `${getHeatIndexCategory(getHighestHeatIndex()).color}10`,
-                  }}>
-                    <h3 className="font-semibold text-base mb-1" style={{ 
-                      color: getContrastColor(getHeatIndexCategory(getHighestHeatIndex()).color) 
-                    }}>
-                      {getHeatIndexCategory(getHighestHeatIndex()).name}
-                      <span className="block text-sm font-normal mt-1">
-                        (Based on highest heat index: {getHighestHeatIndex()}°F)
-                      </span>
-                    </h3>
+              </CardContent>
+            </Card>
+            
+            {/* Risk Assessment */}
+            {!thresholdsLoading && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Heat Risk Assessment</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(() => {
+                    const highestHeatIndex = getHighestHeatIndex();
+                    const category = getHeatIndexCategory(highestHeatIndex);
+                    const contrastColor = getContrastColor(category.color);
                     
-                    <ul className="list-disc pl-5 space-y-1.5 text-sm">
-                      {getHeatIndexCategory(getHighestHeatIndex()).precautions.map((precaution, index) => (
-                        <li key={index} style={{ wordBreak: "break-word" }}>
-                          {precaution}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <Button 
-                    className="w-full py-2.5 text-sm bg-green-600 hover:bg-green-700"
-                    onClick={() => router.push("/heat/submit-jsa")}
-                  >
-                    Fill out Compliance Checklist
-                  </Button>
-                </>
-              )}
-
-              {/* Forecast Section */}
-              {forecast && forecast.length > 0 && (
-                <div className="pt-2">
-                  <h3 className="font-semibold text-base mb-2">5-Day Forecast</h3>
-                  
-                  <div className="overflow-x-auto pb-2">
-                    <div className="flex gap-2 min-w-full">
-                      {forecast.map((day, index) => (
-                        <div key={index} className="flex-1 min-w-0 border rounded-md p-2 text-center">
-                          <div className="font-medium text-xs">
-                            {new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}
+                    return (
+                      <>
+                        <div className="flex items-center justify-between rounded-md border p-4 shadow-sm mb-4">
+                          <div>
+                            <h3 className="text-lg font-semibold">{category.name}</h3>
+                            <p className="text-muted-foreground">Current heat index: {Math.round(weatherData.heatIndex)}°F</p>
+                            {forecast && forecast.length > 0 && (
+                              <p className="text-muted-foreground">
+                                Max forecast heat index today: {Math.round(getMaxHeatIndexForToday())}°F
+                              </p>
+                            )}
                           </div>
-                          <div className="text-lg font-semibold" style={{ 
-                            color: getContrastColor(getHeatIndexCategory(day.maxHeatIndex).color) 
-                          }}>
-                            {day.maxHeatIndex}°F
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            H: {day.maxTemperature}° L: {day.minTemperature}°
+                          <div 
+                            className="h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-xl"
+                            style={{ backgroundColor: contrastColor }}
+                          >
+                            {Math.round(highestHeatIndex)}°F
                           </div>
                         </div>
-                      ))}
-                    </div>
+                        
+                        <div className="border rounded-md p-4">
+                          <h4 className="font-medium mb-2">Recommended Precautions:</h4>
+                          <ul className="list-disc ml-5 space-y-1">
+                            {category.precautions.map((precaution, index) => (
+                              <li key={index} className="text-muted-foreground">{precaution}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        
+                        <Button 
+                          onClick={() => router.push('/heat/submit-jsa')}
+                          className="w-full"
+                        >
+                          Complete Heat JSA Form
+                        </Button>
+                      </>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Forecast Display */}
+            {forecast && forecast.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>5-Day Forecast</CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <div className="flex space-x-2 min-w-max md:min-w-0">
+                    {forecast.map((day, index) => {
+                      const category = getHeatIndexCategory(day.maxHeatIndex);
+                      const dateObj = new Date(day.date);
+                      const dayName = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
+                      const monthDay = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                      
+                      return (
+                        <div key={index} className="flex-1 min-w-24 border rounded-lg p-3 text-center">
+                          <div className="font-medium">{dayName}</div>
+                          <div className="text-xs text-muted-foreground mb-2">{monthDay}</div>
+                          
+                          <div className="flex flex-col items-center gap-1 mb-2">
+                            <span className="text-xs text-muted-foreground">High / Low</span>
+                            <div>
+                              <span className="font-semibold">{Math.round((day as any).tempMax || day.maxTemperature)}° </span>
+                              <span className="text-muted-foreground">/ {Math.round((day as any).tempMin || day.minTemperature)}°</span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="text-xs text-muted-foreground">Heat Index</span>
+                            <div
+                              className="rounded-full px-2 py-1 text-xs font-semibold text-white"
+                              style={{ backgroundColor: getContrastColor(category.color) }}
+                            >
+                              {Math.round(day.maxHeatIndex)}°F
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+      </ResponsiveContainer>
     </MainLayout>
   )
 }
